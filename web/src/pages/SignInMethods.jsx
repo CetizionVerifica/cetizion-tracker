@@ -40,7 +40,7 @@ export function SignInMethods() {
   const { data, loading, error, refetch } = useFetch(() => api.raw('/auth/providers'), []);
 
   if (error) return <SettingsPane title="Sign-in methods"><ErrorState message={error} onRetry={refetch} /></SettingsPane>;
-  if (loading || !data) return <SettingsPane title="Sign-in methods"><div className="skeleton" style={{ height: 200 }} /></SettingsPane>;
+  if (loading || !data) return <SettingsPane title="Sign-in methods"><div className="skeleton h-[200px]" /></SettingsPane>;
 
   const { mode, providers } = data.data;
 
@@ -83,7 +83,7 @@ export function SignInMethods() {
                 <div className="text-[12.5px] font-medium text-foreground">Still blank in the environment</div>
                 <ul className="mt-1.5 flex flex-wrap gap-2">
                   {p.missing.map((name) => (
-                    <li key={name} className="num rounded-[6px] border border-waiting/28 bg-waiting/10 px-2 py-1 text-[11.5px] text-waiting">
+                    <li key={name} className="num rounded-sm border border-waiting/28 bg-waiting/10 px-2 py-1 text-[11.5px] text-waiting">
                       {name}
                     </li>
                   ))}
@@ -94,7 +94,7 @@ export function SignInMethods() {
             <div className="text-[12.5px] font-medium text-foreground">Redirect URI</div>
             {p.redirect_uri ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                <code className="num min-w-0 flex-1 truncate rounded-[6px] border border-border bg-secondary px-2.5 py-1.5 text-[12px] text-secondary-text">
+                <code className="num min-w-0 flex-1 truncate rounded-sm border border-border bg-secondary px-2.5 py-1.5 text-[12px] text-secondary-text">
                   {p.redirect_uri}
                 </code>
                 <Button variant="ghost" size="sm" onClick={() => copy(p.redirect_uri)}>

@@ -24,6 +24,7 @@ import { INK, MARGIN_X, PDF_STYLES, dateLabel, generatedStamp, periodLabel, repo
 import { compactInr, money, number, plural } from './reportFormat.js';
 import { windowNote } from './misWindow.js';
 import { closingLine, dayParagraph, glanceRows, listNote, sourceLine } from './misBriefing.js';
+import { MAILBOX_PARTS, PERSONAL_SECTIONS, dayTitle, teamReportsLine } from './emailTemplates.js';
 
 export const MAX_ROWS = 12;
 /** The weekly report's lists are shorter: eight sections share two pages. */
@@ -43,11 +44,12 @@ const ddMon = (d) => { const [, m, day] = String(d).split('-'); return `${day}${
 
 /** The attachment's name, as the routines named theirs. */
 export function misFileName(data) {
+  if (data.kind === 'personal_daily') return `Daily_MIS_${String(data.person.name).replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '')}_${data.period.from}.pdf`;
   if (data.kind === 'daily_briefing') return `Daily_Sales_Briefing_${data.period.from}.pdf`;
   return `Sales_MIS_Report_${ddMon(data.period.from)}-${ddMon(data.period.to)}${data.period.to.slice(0, 4)}.pdf`;
 }
 
-export const REPORT_TITLE = { daily_briefing: 'Daily Sales Briefing', weekly_mis: 'Weekly Sales MIS Report' };
+export const REPORT_TITLE = { daily_briefing: 'Daily Sales Briefing', weekly_mis: 'Weekly Sales MIS Report', personal_daily: 'Daily MIS' };
 
 const words = (data, key) => data.commentary?.sections?.[key] || data.narrative?.[key] || null;
 
@@ -291,6 +293,7 @@ export function dailyBriefingDoc(data, { company = 'Cetizion Verifica', generate
         style: 'body',
       }
       : { text: 'Nothing is pending.', style: 'empty' },
+    data.team_reports ? { text: teamReportsLine(data.team_reports), style: 'body', margin: [0, 8, 0, 0] } : null,
     fxNote,
   ];
   const footerText = `Prepared automatically from the ${boxes.length ? `${boxes.join(', ')} mailbox${boxes.length === 1 ? '' : 'es'}` : 'shared mailboxes'} and the tracker's records  ·  ${REPORT_TITLE.daily_briefing}, ${day}`;
@@ -449,9 +452,43 @@ export function weeklyMisDoc(data, { company = 'Cetizion Verifica', generatedAt 
   return docShell({ title: REPORT_TITLE.weekly_mis, periodText, company, generatedAt, timeZone, content, info: `Week of ${periodText}`, footnote });
 }
 
-/** Either report, as a Buffer. */
+// ---------------------------------------------------------------------
+// The personal daily MIS (mis-report-sender-plan.md §B1): the AI's report,
+// as writePersonal checked it. Code lays it out and adds the headings.
+// ---------------------------------------------------------------------
+
+const COUNT_TILES = [['emails_sent', 'Emails sent'], ['emails_received', 'Emails received'], ['calls', 'Calls and meetings'], ['records_created', 'Records created'], ['tasks_done', 'Tasks done'], ['overdue', 'Overdue']];
+
+export function personalMisDoc(data, { company = 'Cetizion Verifica', generatedAt = new Date(), timeZone = 'Asia/Kolkata' } = {}) {
+  const r = data.report;
+  const appUrl = data.app_url || '';
+  const day = dayTitle(data.period.from);
+  const line = (x, extra = []) => ({ text: [linked(x.text, href(appUrl, x.link)), ...extra] });
+  const flag = (x) => (x.no_action_yesterday ? [{ text: '  no action yesterday', bold: true, color: RED }] : []);
+  const due = (x) => (x.due ? [{ text: `  (by ${dateLabel(x.due)})`, color: INK[500] }] : []);
+  const list = (items, render, ol = false) => (items.length ? { [ol ? 'ol' : 'ul']: items.map(render), style: 'body' } : { text: '—', style: 'empty' });
+  const body = {
+    actions: () => list(r.actions, (x) => ({ text: [{ text: `${x.at}  `, color: INK[500] }, linked(x.text, href(appUrl, x.link))] })),
+    mailbox: () => MAILBOX_PARTS.flatMap(([k, t]) => [subheading(t), list(r.mailbox[k], (x) => line(x, due(x)))]),
+    not_in_tracker: () => list(r.not_in_tracker, (x) => line(x)),
+    waiting: () => list(r.waiting, (x) => line(x, flag(x))),
+    today: () => list(r.today, (x) => line(x)),
+    for_management: () => list(r.for_management, (text) => ({ text })),
+  };
+  const content = [
+    header(`${REPORT_TITLE.personal_daily} · ${data.person.name}`, day, company),
+    ...heading(1, 'Summary of the day'),
+    { text: r.summary.text, style: 'body' },
+    tiles(COUNT_TILES.map(([k, label]) => [number(r.summary.counts[k]), label])),
+    ...PERSONAL_SECTIONS.flatMap(([key, title], i) => [...heading(i + 2, title), ...[body[key]()].flat()]),
+  ];
+  const footerText = `Written by AI from ${data.person.name}'s mailbox and their records in the tracker, and checked against them  ·  ${day}`;
+  return docShell({ title: `${REPORT_TITLE.personal_daily} · ${data.person.name}`, periodText: day, company, generatedAt, timeZone, content, info: `${data.person.name}, ${day}`, footerText });
+}
+
+/** Any of the reports, as a Buffer. */
 export function misPdf(data, options) {
-  const doc = data.kind === 'daily_briefing' ? dailyBriefingDoc(data, options) : weeklyMisDoc(data, options);
+  const doc = data.kind === 'daily_briefing' ? dailyBriefingDoc(data, options) : data.kind === 'personal_daily' ? personalMisDoc(data, options) : weeklyMisDoc(data, options);
   return pdfmake.createPdf(doc).getBuffer();
 }
 

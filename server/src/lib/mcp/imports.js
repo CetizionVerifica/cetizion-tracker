@@ -53,7 +53,7 @@ function assertMayImport(scope) {
 
 /** A batch this server planned, drafts only, or a sentence saying why not. */
 async function ownDraft(batchId) {
-  const { rows } = await query('SELECT id, filename, status FROM import_batches WHERE id = $1', [batchId]);
+  const { rows } = await query("SELECT id, filename, status FROM import_batches WHERE id = $1 AND kind = 'sales'", [batchId]);
   if (!rows.length) throw new ApiError(404, `Import batch ${batchId} was not found.`);
   const b = rows[0];
   // An upload's review screen is where its own reviewer is working. Two

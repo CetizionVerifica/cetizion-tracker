@@ -27,6 +27,7 @@ import { UNRESTRICTED } from '../auth/ownership.js';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from './businessDate.ts';
+import { addressesIn, recipientLists } from './mail.js';
 import { OPEN_ENQUIRY_STATUSES, OPEN_QUOTATION_STATUSES, keyOf, lastActivity, recordLink, dateOf } from './followUps.js';
 import { insightsContext, loadConverter, overdueFollowUps, receivablesSection } from './insights.js';
 import { pipelineCards, summarisePipeline } from './pipeline.js';
@@ -77,10 +78,13 @@ export const monthToDate = (date) => ({ from: `${date.slice(0, 7)}-01`, to: date
 // Settings
 // ---------------------------------------------------------------------
 
-export const SETTING_KEYS = ['mis_daily_enabled', 'mis_weekly_enabled', 'mis_to', 'mis_cc', 'mis_sender_account_id', 'mis_overdue_days', 'public_app_url'];
+export const SETTING_KEYS = ['mis_daily_enabled', 'mis_weekly_enabled', 'mis_to', 'mis_cc', 'mis_sender_account_id', 'mis_sender_address', 'mis_sender_name', 'mis_overdue_days', 'public_app_url'];
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
-// Only things that are addresses: a setting cannot be saved blank, so "none" clears a list.
-const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter((a) => a.includes('@'));
+const text = (v) => { const t = String(v ?? '').trim(); return t && t.toLowerCase() !== 'none' ? t : null; };
+// Only things that are addresses, each once whatever its case (#195): a
+// setting cannot be saved blank, so "none" clears a list.
+const addresses = (v) => addressesIn(v).filter((a) => a.includes('@'));
+const recipientsOf = (to, cc) => { const l = recipientLists(addresses(to), addresses(cc)); return { to: l.to, cc: l.cc }; };
 
 export async function misSettings(db = { query }) {
   const { rows } = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [SETTING_KEYS]);
@@ -89,9 +93,12 @@ export async function misSettings(db = { query }) {
   return {
     dailyEnabled: on(s.mis_daily_enabled),
     weeklyEnabled: on(s.mis_weekly_enabled),
-    to: addresses(s.mis_to),
-    cc: addresses(s.mis_cc),
+    // Nobody is copied who is already a recipient (#195).
+    ...recipientsOf(s.mis_to, s.mis_cc),
     senderAccountId: num(s.mis_sender_account_id, null),
+    // Send As and the display name (mis-report-sender-plan.md §A2); "none" or blank is unset.
+    senderAddress: text(s.mis_sender_address),
+    senderName: text(s.mis_sender_name),
     overdueDays: Math.max(1, Math.trunc(num(s.mis_overdue_days, 7))),
     appUrl: String(s.public_app_url || '').replace(/\/$/, ''),
   };
@@ -107,11 +114,13 @@ export async function misSettings(db = { query }) {
  * days × INR value, so an old small item and a young large one both
  * surface, and a row with no value still ranks by its age.
  */
-export function pendingRow({ kind, key, client, reference, amount_inr: amountInr = null, currency = null, amount = null, since, days, owner = null, next_action: nextAction, link, record = null, mail = null }, overdueDays) {
+export function pendingRow({ kind, key, client, reference, amount_inr: amountInr = null, currency = null, amount = null, since, days, owner = null, owner_user_id: ownerUserId = null, next_action: nextAction, link, record = null, mail = null }, overdueDays) {
   const waited = Math.max(0, Math.trunc(days ?? 0));
   return {
     kind, key, client: client || 'Unknown client', reference, amount_inr: amountInr == null ? null : r2(Number(amountInr)), currency, amount,
     since: since || null, days: waited, overdue: waited > overdueDays, owner: owner || null, next_action: nextAction, link, record,
+    // Whose it is, for a person's own daily MIS (mis-report-sender-plan.md §B1 section 5).
+    owner_user_id: ownerUserId,
     // Where the row's email is (§3 "Last activity" and "Email"): { entity, id } for a record's threads, or { thread_id }.
     mail, last_activity: null, email_link: null,
     score: waited * Math.max(Number(amountInr) || 0, 1),
@@ -149,7 +158,7 @@ export async function pendingInvoices(db, { today, overdueDays }) {
             ps.currency, ps.stage_amount, ps.amount_received, ps.due_now_amount,
             ps.milestone_reached_on, ps.delivery_date, ps.po_date, ps.on_hold, ps.hold_reason, ps.promise_to_pay_date,
             ps.reminder_sent_on, ps.reminder_level, ps.payment_received_date,
-            COALESCE(c.name, ps.client_name) AS client_name, COALESCE(u.name, NULLIF(btrim(pr.project_manager), '')) AS owner,
+            COALESCE(c.name, ps.client_name) AS client_name, COALESCE(u.name, NULLIF(btrim(pr.project_manager), '')) AS owner, pr.owner_user_id,
             r.rate
        FROM v_payment_stages ps
        JOIN projects pr ON pr.project_id = ps.project_id
@@ -168,7 +177,7 @@ export async function pendingInvoices(db, { today, overdueDays }) {
       out.push(pendingRow({
         kind: 'to_invoice', key: `stage:${s.id}`, client: clientName(s), reference: `${s.po_number} · ${s.stage_name}`,
         amount: Number(s.stage_amount), currency: s.currency, amount_inr: rate == null ? null : Number(s.stage_amount) * rate,
-        since, days: since ? daysBetween(since, today) : 0, owner: s.owner,
+        since, days: since ? daysBetween(since, today) : 0, owner: s.owner, owner_user_id: s.owner_user_id,
         next_action: `Raise the ${s.stage_name} invoice`, link: `/payment-stages?status=To%20Invoice&q=${encodeURIComponent(s.po_number)}`,
         mail: { entity: 'purchase_order', id: s.po_number },
       }, overdueDays));
@@ -187,7 +196,7 @@ export async function pendingInvoices(db, { today, overdueDays }) {
     const row = pendingRow({
       kind: 'invoice_due', key: `stage:${s.id}`, client: clientName(s), reference: `Invoice ${s.invoice_no || '—'} · ${s.po_number}`,
       amount: owed, currency: s.currency, amount_inr: rate == null ? null : owed * rate,
-      since: due, days: late, owner: s.owner,
+      since: due, days: late, owner: s.owner, owner_user_id: s.owner_user_id,
       next_action: `${late > 0 ? `Chase payment, ${late} day${late === 1 ? '' : 's'} overdue` : `Due ${due ? `on ${due}` : 'soon'}`}${chased.length ? `; ${chased.join('; ')}` : ''}`,
       link: recordLink('payment_stage', s.id), mail: { entity: 'purchase_order', id: s.po_number },
     }, overdueDays);
@@ -228,7 +237,7 @@ export async function pendingPos(db, { today, overdueDays }) {
   const { rows } = await db.query(
     `WITH ${RATES}
      SELECT q.quotation_no, q.client_name, q.status, q.stage_id, q.stage_changed_at, q.accepted_at, q.closed_at, q.quotation_date,
-            COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.expected_close_date, q.next_step, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner, r.rate,
+            COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.expected_close_date, q.next_step, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner, q.owner_user_id, r.rate,
             EXISTS (SELECT 1 FROM purchase_orders po WHERE ${poQuotationNo('po')} = q.quotation_no AND ${poCountsAsSale('po')}) AS has_po
        FROM quotations q
        LEFT JOIN users u ON u.id = q.owner_user_id
@@ -244,7 +253,7 @@ export async function pendingPos(db, { today, overdueDays }) {
     out.push(pendingRow({
       kind: won ? 'won_without_po' : 'awaiting_po', key: `quotation:${q.quotation_no}`, client: q.client_name, reference: q.quotation_no,
       amount: q.amount == null ? null : Number(q.amount), currency: q.currency, amount_inr: rate == null || q.amount == null ? null : Number(q.amount) * rate,
-      since, days: since ? daysBetween(since, today) : 0, owner: q.owner,
+      since, days: since ? daysBetween(since, today) : 0, owner: q.owner, owner_user_id: q.owner_user_id,
       next_action: won ? 'Register the PO the client sent' : (q.next_step || 'Ask the client for the PO'),
       link: recordLink('quotation', q.quotation_no), mail: { entity: 'quotation', id: q.quotation_no },
     }, overdueDays));
@@ -277,7 +286,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
   const [{ rows: enquiries }, { rows: quotations }] = await Promise.all([
     db.query(
       `WITH ${RATES}
-       SELECT e.enquiry_no, e.client_name, e.status, e.service, e.estimated_value, e.currency, e.next_follow_up_at, COALESCE(u.name, NULLIF(btrim(e.sales_person), '')) AS owner, r.rate,
+       SELECT e.enquiry_no, e.client_name, e.status, e.service, e.estimated_value, e.currency, e.next_follow_up_at, COALESCE(u.name, NULLIF(btrim(e.sales_person), '')) AS owner, e.owner_user_id, r.rate,
               COALESCE(e.enquiry_date, (e.created_at AT TIME ZONE $2)::date) AS since
          FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id
          ${rateOn('r', 'e.currency', 'e.enquiry_date')}
@@ -286,7 +295,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
     db.query(
       `WITH ${RATES}
        SELECT q.quotation_no, q.client_name, q.status, q.sent_at, q.quotation_date, q.next_step,
-              COALESCE(q.total, q.quotation_value) AS amount, q.currency, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner, r.rate
+              COALESCE(q.total, q.quotation_value) AS amount, q.currency, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner, q.owner_user_id, r.rate
          FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id
          ${rateOn('r', 'q.currency', 'q.quotation_date')}
         WHERE q.status = ANY($1::text[]) AND q.accepted_at IS NULL AND q.closed_at IS NULL AND q.stage_id IS DISTINCT FROM $2
@@ -300,7 +309,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
       kind: 'enquiry_unquoted', key: `enquiry:${e.enquiry_no}`, client: e.client_name, reference: `${e.enquiry_no}${e.service ? ` · ${e.service}` : ''}`,
       amount: e.estimated_value == null ? null : Number(e.estimated_value), currency: e.currency,
       amount_inr: rate == null || e.estimated_value == null ? null : Number(e.estimated_value) * rate,
-      since, days: since ? daysBetween(since, today) : 0, owner: e.owner,
+      since, days: since ? daysBetween(since, today) : 0, owner: e.owner, owner_user_id: e.owner_user_id,
       next_action: 'Send the quotation', link: recordLink('enquiry', e.enquiry_no), mail: { entity: 'enquiry', id: e.enquiry_no },
     }, overdueDays));
   }
@@ -313,7 +322,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
     out.push(pendingRow({
       kind: 'quotation_open', key: `quotation:${q.quotation_no}`, client: q.client_name, reference: `${q.quotation_no} · ${q.status}`,
       amount: q.amount == null ? null : Number(q.amount), currency: q.currency, amount_inr: rate == null || q.amount == null ? null : Number(q.amount) * rate,
-      since, days: since ? daysBetween(since, today) : 0, owner: q.owner,
+      since, days: since ? daysBetween(since, today) : 0, owner: q.owner, owner_user_id: q.owner_user_id,
       next_action: q.next_step || 'Follow up with the client', link: recordLink('quotation', q.quotation_no), mail: { entity: 'quotation', id: q.quotation_no },
     }, overdueDays));
   }

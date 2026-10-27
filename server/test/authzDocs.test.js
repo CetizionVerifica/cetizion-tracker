@@ -10,10 +10,14 @@ import test, { describe } from 'node:test';
  */
 describe('the authorization document matches the policy', () => {
   test('it is up to date', async () => {
-    const { currentDocument, expectedDocument } = await import('../scripts/authz-docs.js');
+    const { currentDocument } = await import('../scripts/authz-docs.js');
+    const { render } = await import('../src/lib/authz/docs.js');
+    // A Windows checkout (core.autocrlf) gives the document CRLF endings while the
+    // generated tables use LF; compare the text, not the line endings.
+    const current = currentDocument().replace(/\r\n/g, '\n');
     assert.equal(
-      currentDocument(),
-      expectedDocument(),
+      current,
+      render(current),
       '\ndocs/issue-18-authorization.md no longer matches src/lib/authz/policy.js.\nRun `npm run authz:docs` from server/ and commit the result.\n'
     );
   });

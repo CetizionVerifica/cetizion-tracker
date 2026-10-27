@@ -43,8 +43,8 @@ async function signIn(page) {
   await page.getByLabel(label, { exact: true }).fill(who);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 }
 
 /**
@@ -59,8 +59,28 @@ async function palette(page, type) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  // Six record types, not thirty screens.
   await expect(page.locator('nav').getByRole('link', { name: /^Deals/ })).toBeVisible();
+});
+
+/**
+ * The sidebar is grouped by the process (web/CLAUDE.md §3): every group is
+ * there in order, a folded group stays folded after a reload, and the app
+ * carries no company name.
+ */
+test('the sidebar groups follow the process and remember being folded', async ({ page }) => {
+  await signIn(page);
+  const nav = page.locator('nav');
+  const groups = nav.getByRole('button', { name: /^(Sell|Deliver|Money|Travel|Insights)$/ });
+  await expect(groups).toHaveText(['Sell', 'Deliver', 'Money', 'Travel', 'Insights']);
+  await expect(page.getByText('Sales Tracker', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Cetizion Verifica/)).toHaveCount(0);
+
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeHidden();
+  await page.reload();
+  await expect(nav.getByRole('button', { name: 'Sell' })).toHaveAttribute('aria-expanded', 'false');
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeVisible();
 });
 
 test('the palette finds a record by half its client name', async ({ page }) => {
@@ -89,8 +109,8 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
   await page.getByRole('button', { name: /Raise an invoice/ }).click();
   await expect(page.getByText('Invoice date is needed.')).toBeVisible();
   await page.keyboard.press('Escape');
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -107,7 +127,7 @@ test('a wrong password is refused', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign in' }).click();
   // A real alert, announced, not a div with a class on it.
   await expect(page.getByRole('alert')).toContainText(/do not match/);
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toHaveCount(0);
   // And the password box is cleared rather than left holding a wrong one.
   await expect(page.getByLabel('Password')).toHaveValue('');
 });
@@ -116,7 +136,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await signIn(page);
   const client = `E2E Client ${stamp}`;
   await page.locator('nav').getByRole('link', { name: /^Deals/ }).click();
-  await page.getByRole('button', { name: '+ Quotation' }).click();
+  await page.getByRole('button', { name: 'New quotation' }).first().click();
   await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');
@@ -221,7 +241,7 @@ test('Insights answers five questions, and a bar opens the list it counted', asy
   await card.getByRole('button', { name: 'Open as table' }).click();
   await card.getByRole('link', { name: band.label }).click();
   await expect(page).toHaveURL(new RegExp(`/quotations\\?follow_up=overdue&overdue_days=${band.key.replace('+', '%2B')}`));
-  await expect(page.getByText(`${band.count} of ${band.count}`)).toBeVisible();
+  await expect(page.getByText(`${band.count} record${band.count === 1 ? '' : 's'}`, { exact: true })).toBeVisible();
 });
 
 /**
@@ -336,24 +356,25 @@ test('the settings menu opens, with every item on it', async ({ page }) => {
 });
 
 /**
- * Light mode, end to end: choose it, and the document says so.
+ * Dark mode, end to end: light is the default (web/CLAUDE.md §1); choose
+ * dark, and the document says so.
  *
  * The class on <html> is the whole mechanism — every token in globals.css
  * hangs off `.dark` being present or absent — so this is the one assertion
  * that cannot pass while the theme is broken.
  */
-test('choosing light mode takes the dark class off the document', async ({ page }) => {
+test('choosing dark mode puts the dark class on the document', async ({ page }) => {
   await signIn(page);
-  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
 
   await page.getByRole('button', { name: 'Settings and sign out' }).click();
-  await page.getByRole('menuitemradio', { name: 'Light' }).click();
+  await page.getByRole('menuitemradio', { name: 'Dark' }).click();
 
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
   // And it survives a reload, which is what the pre-paint script in
   // index.html exists for.
   await page.reload();
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
 /**
@@ -497,4 +518,448 @@ test('a PO registered from email carries a banner until somebody marks it checke
   // And the list finds it as one registered from email.
   await page.goto('/purchase-orders?from_email=1');
   await expect(page.locator('table')).toContainText(poNumber);
+});
+
+test('the client portal shows each PO and its invoices with GST, and staff preview the same', async ({ page }) => {
+  await signIn(page);
+  const client = `E2E Portal Client ${stamp}`;
+  const q = await quotationFor(page, client);
+  const poNumber = `E2E-PORTAL-${stamp}`;
+  const invoiceNo = `E2E-INV-${stamp}`;
+  await page.request.post(`/api/quotations/${encodeURIComponent(q.quotation_no)}/register`, { data: { po_number: poNumber } });
+  // A contact allowed into the portal, and the PO's first stage invoiced.
+  const { companyId, contactId } = await withDatabase(async (db) => {
+    const { rows: [po] } = await db.query('SELECT p.company_id FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = $1', [poNumber]);
+    const { rows: [ct] } = await db.query('INSERT INTO contacts (company_id, name, email, portal_access) VALUES ($1, $2, $3, true) RETURNING id', [po.company_id, 'Portal Person', `portal-${stamp}@example.com`]);
+    await db.query(`UPDATE payment_stages SET invoice_no = $2, invoice_date = CURRENT_DATE
+                     WHERE id = (SELECT id FROM payment_stages WHERE po_number = $1 ORDER BY stage_no LIMIT 1)`, [poNumber, invoiceNo]);
+    return { companyId: po.company_id, contactId: ct.id };
+  });
+  await page.request.patch(`/api/portal-admin/companies/${companyId}`, { data: { portal_enabled: true, portal_sections: ['projects', 'documents', 'invoices', 'certificates', 'contact'] } });
+  const { data: invite } = await (await page.request.post(`/api/portal-admin/contacts/${contactId}/invite`)).json();
+
+  // Staff see the client's view from the company page.
+  await page.goto(`/companies/${companyId}`);
+  await page.getByRole('button', { name: 'Show the client\'s view' }).click();
+  await expect(page.getByText(invoiceNo).first()).toBeVisible();
+  await expect(page.getByText('Taxable').first()).toBeVisible();
+
+  // The client, from the emailed link: the PO with what is still to bill, then the invoice with its GST.
+  const link = new URL(invite.url);
+  await page.goto(link.pathname);
+  await expect(page.getByRole('heading', { name: client })).toBeVisible();
+  await page.getByRole('button', { name: 'Projects & orders' }).click();
+  await expect(page.getByText(`PO ${poNumber}`).first()).toBeVisible();
+  await expect(page.getByText('Still to bill')).toBeVisible();
+  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
+  await expect(page.getByText('GST', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(invoiceNo).first()).toBeVisible();
+
+  // #198 phase 2: the client tells us they paid. It is a claim: the invoice says so, the figures do not change.
+  await page.getByRole('button', { name: "Tell us you've paid" }).first().click();
+  await page.getByLabel('Reference').fill(`UTR-${stamp}`);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText(/finance team will check/)).toBeVisible();
+  await expect(page.getByText('Being checked')).toBeVisible();
+
+  // Finance sees it in Collections and matches it by recording the receipt it reports.
+  await page.goto('/collections');
+  await expect(page.getByText('From the client portal')).toBeVisible();
+  await expect(page.getByText(`UTR-${stamp}`)).toBeVisible();
+  await page.getByRole('button', { name: 'Match', exact: true }).click();
+  await page.getByRole('button', { name: 'Save payment' }).click();
+  await expect(page.getByText('No payments reported')).toBeVisible();
+
+  // The client sees it recorded.
+  await page.goto('/portal');
+  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
+  await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
+});
+
+/**
+ * Settings, Client emails: every kind of email that goes to a client, and
+ * the admin's hold on them. Holding one kind and then everything changes
+ * what the page says; both are released at the end so the flows above are
+ * unaffected on a rerun.
+ */
+test('an admin sees every client email and can hold them', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/settings/client-emails');
+  await expect(page.getByRole('heading', { name: 'Client emails' })).toBeVisible();
+  const table = page.getByRole('table', { name: 'Kinds of client email' });
+  await expect(table.getByText('Overdue payment reminder')).toBeVisible();
+  await expect(table.getByText('Reply from the Inbox')).toBeVisible();
+
+  const quotation = table.getByRole('row').filter({ hasText: 'Someone sends a quotation with "email" ticked.' });
+  await quotation.getByRole('button', { name: 'Hold' }).click();
+  await expect(quotation.getByText('Held', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Hold all client emails' }).click();
+  await expect(page.getByText(/Each one is logged below and none reaches a client/)).toBeVisible();
+  await expect(page.getByText('Every kind is held while all client emails are held.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Release client emails' }).click();
+  await expect(page.getByRole('button', { name: 'Hold all client emails' })).toBeVisible();
+  await quotation.getByRole('button', { name: 'Release' }).click();
+  await expect(quotation.getByText('Goes out', { exact: true })).toBeVisible();
+});
+
+/**
+ * An email's attachments are viewed in the Inbox and nowhere else
+ * (docs/inbox-attachments-plan.md, steps 1 and 2): a PDF drawn by pdf.js
+ * inside the page, a CSV as a table, a Word document as HTML, and no
+ * download anywhere — the file's own
+ * address, opened as a link, is refused.
+ */
+test('an attachment opens in the Inbox viewer, and cannot be downloaded', async ({ page }) => {
+  await signIn(page);
+  const crashes = [];
+  page.on('pageerror', (err) => crashes.push(String(err)));
+
+  // A one-page PDF, with its cross-reference table counted out.
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    '<< /Length 44 >>\nstream\nBT /F1 18 Tf 40 100 Td (Quotation) Tj ET\nendstream',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((body, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const bytes = (s) => [...Buffer.from(s)];
+
+  const box = (await (await page.request.post('/api/mailboxes/test', { data: { email: `viewer-${stamp}@cetizionverifica.com`, shared: true } })).json()).data;
+  // Subjects and file names stored, so the list can name the files.
+  expect((await page.request.patch(`/api/mailboxes/${box.id}`, { data: { visibility: 'subject' } })).ok()).toBeTruthy();
+  const subject = `Quotation ${stamp}`;
+  await page.request.post(`/api/mailboxes/${box.id}/test-messages`, { data: { messages: [{
+    conversation_id: `conv-${stamp}`, internet_message_id: `<${stamp}@client>`, subject, body_html: '<p>Please find attached.</p>',
+    from: { email: `buyer-${stamp}@acme-steel.co.in`, name: 'Ravi' }, to: [{ email: box.email }], has_attachments: true,
+    attachments: [
+      { provider_id: 'att-pdf', name: 'quote.pdf', contentType: 'application/pdf', content: bytes(pdf) },
+      { provider_id: 'att-csv', name: 'rates.csv', contentType: 'text/csv', content: bytes('Item,Rate\nAudit,1200\n') },
+      { provider_id: 'att-doc', name: 'scope.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        content: [...readFileSync(join(here, '..', '..', 'server', 'test', 'fixtures', 'attachments', 'letter.docx'))] },
+    ],
+  }] } });
+  expect((await page.request.post(`/api/mailboxes/${box.id}/sync`)).ok()).toBeTruthy();
+
+  await page.goto(`/inbox?mb=${box.id}&f=inbox`);
+  const row = page.getByRole('option').filter({ hasText: subject });
+  // The list names the files before anything is opened.
+  await expect(row.getByText('quote.pdf')).toBeVisible();
+  await row.click();
+
+  await page.getByRole('button', { name: 'View quote.pdf' }).click();
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.getByText('1 page')).toBeVisible();
+  await expect(viewer.getByLabel('Page 1')).toBeVisible();
+  // The page is drawn: some of the canvas is no longer blank.
+  await expect.poll(() => viewer.getByLabel('Page 1').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) if (d[i] < 128) return true;
+    return false;
+  })).toBe(true);
+  await expect(page.locator('a[download]')).toHaveCount(0);
+  await expect(page.getByText(/download/i)).toHaveCount(0);
+
+  await page.keyboard.press('ArrowRight');
+  await expect(viewer.getByRole('cell', { name: 'Audit' })).toBeVisible();
+  // A Word document, as cleaned HTML in the script-free frame.
+  await page.keyboard.press('ArrowRight');
+  await expect(viewer.frameLocator('iframe[title="scope.docx"]').getByRole('heading', { name: 'Scope of audit' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+
+  // The viewer's address, opened the way a link or a pasted URL opens it.
+  const message = (await (await page.request.get(`/api/mail/folders/${box.id}/inbox/messages?q=${encodeURIComponent(subject)}`)).json()).data[0];
+  const detail = (await (await page.request.get(`/api/mail/messages/${message.message_id}`)).json()).data;
+  expect((await page.request.get(detail.attachments[0].view_url)).status()).toBe(403);
+  expect(crashes).toEqual([]);
+});
+
+test('a service questionnaire: sent from an enquiry, filled in on a phone, and the answers back on the enquiry', async ({ page }) => {
+  await signIn(page);
+  // The link is built on the public address; here, the address the tests run on.
+  await page.request.patch('/api/settings/public_app_url', { data: { value: new URL(page.url()).origin } });
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Certification ${stamp}` } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E questionnaire' } })).json();
+  await page.request.patch(`/api/questionnaire-versions/${form.versions[0].id}`, { data: { definition: { steps: [
+    { key: 'organisation', title: 'Your organisation', questions: [{ key: 'employee_count', type: 'number', label: 'Employees in scope', required: true, integer: true, min: 1 }] },
+    { key: 'scope', title: 'Scope', questions: [
+      { key: 'certified', type: 'yesno', label: 'Certified before?', required: true },
+      { key: 'body', type: 'text', label: 'Which body?', required: true, show_if: { key: 'certified', op: 'eq', value: true } },
+    ] },
+  ] } } });
+  expect((await page.request.post(`/api/questionnaire-versions/${form.versions[0].id}/publish`)).status()).toBe(200);
+  const { data: enquiry } = await (await page.request.post('/api/enquiries', { data: { client_name: `E2E Questionnaire Client ${stamp}`, service: svc.name, status: 'New' } })).json();
+
+  // Staff make a link from the enquiry list.
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Send', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Make a link only' }).click();
+  const link = await page.locator('.mono.small').filter({ hasText: '/q/' }).first().innerText();
+  await page.keyboard.press('Escape');
+
+  // The client, on a phone: a required answer is asked for, a conditional one appears.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(new URL(link).pathname);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Required', { exact: true })).toBeVisible();
+  await page.getByLabel('Employees in scope').fill('45');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByLabel('Which body?')).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Yes' }).check();
+  await page.getByLabel('Which body?').fill('Example Body');
+  await page.getByRole('button', { name: 'Review' }).click();
+  await page.getByLabel('Your name').fill('Asha Example');
+  await page.getByLabel('Your email').fill(`asha-${stamp}@example.com`);
+  await page.getByRole('button', { name: 'Submit answers' }).click();
+  await expect(page.getByText('Thank you', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  // Back on the enquiry: submitted, with the answers.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Submitted' }).first().click();
+  await expect(page.getByText('Example Body')).toBeVisible();
+});
+
+/**
+ * A light and a dark capture at desktop and phone width, when E2E_SHOTS
+ * names a folder (web/CLAUDE.md §8: checked in both themes, at 1440 and 390),
+ * and each of `mine` (the parts this feature added) inside the screen at both.
+ */
+async function shots(page, name, mine = []) {
+  const dir = process.env.E2E_SHOTS;
+  if (!dir) return;
+  const size = page.viewportSize();
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t) => { localStorage.setItem('cetizion.theme', t); document.documentElement.classList.toggle('dark', t === 'dark'); }, theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      // Narrowing a desktop window opens the sidebar as a drawer over the page (a phone that loads the
+      // page starts with it closed); Escape closes only that top layer, so a dialog beneath stays.
+      const drawer = page.locator('[role="dialog"]').filter({ hasText: 'Sales Tracker' });
+      if (width < 1024 && await drawer.count()) {
+        await page.keyboard.press('Escape');
+        await expect(drawer).toHaveCount(0);
+      }
+      await page.screenshot({ path: join(dir, `${name}-${theme}-${width}.png`), fullPage: true });
+      for (const part of mine) {
+        const box = await part.first().boundingBox();
+        expect(box, `${name}: part shown at ${width}`).toBeTruthy();
+        expect(box.x + box.width, `${name}: part fits ${width} wide`).toBeLessThanOrEqual(width + 1);
+      }
+    }
+  }
+  await page.evaluate(() => localStorage.removeItem('cetizion.theme'));
+  await page.setViewportSize(size);
+}
+
+test('a quotation from the answers: priced by the rules, Price needed holds Send, the rate goes in, then it goes for acceptance', async ({ page }) => {
+  await signIn(page);
+  await page.request.patch('/api/settings/public_app_url', { data: { value: new URL(page.url()).origin } });
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Audit ${stamp}`, default_rate: 25000, unit: 'day' } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E priced questionnaire' } })).json();
+  const versionId = form.versions[0].id;
+  await page.request.patch(`/api/questionnaire-versions/${versionId}`, { data: {
+    definition: { steps: [{ key: 'organisation', title: 'Your organisation', questions: [
+      { key: 'employee_count', type: 'number', label: 'Employees in scope', required: true, integer: true, min: 1 },
+    ] }] },
+    pricing: { lines: [
+      { key: 'audit', description: 'Certification audit', qty: { band: { of: { answer: 'employee_count' }, bands: [[1, 45, 3], [46, 125, 5]] } }, rate: { catalogue: true }, unit: 'man-day' },
+      // Broken on purpose: counting choices needs a multi-select, and employee_count is a number.
+      { key: 'report', description: 'Audit report', rate: { count: 'employee_count' } },
+      { key: 'large_sites', description: 'Large site review', qty: { band: { of: { answer: 'employee_count' }, bands: [[1, 50, 1]] } }, rate: { fixed: 8000 } },
+    ] },
+  } });
+
+  // The Pricing tab: the rules as lines; a broken one holds Publish back, saying why, with the problem beside its line.
+  await page.goto('/settings/templates');
+  await page.getByRole('button', { name: /Questionnaires/ }).first().click();
+  await page.getByText('E2E priced questionnaire').first().click();
+  const publish = page.getByRole('button', { name: 'Publish version 1' });
+  await expect(publish).toBeDisabled();
+  await expect(page.getByText('Publishing waits until the pricing problem on the Pricing tab is fixed and saved.')).toBeVisible();
+  await page.getByRole('tab', { name: 'Pricing · 1 to fix' }).click();
+  const line2 = page.getByRole('region', { name: 'Pricing line 2' });
+  await expect(line2.getByText(/counting needs a multi-select or checkbox question/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Pricing line 1' })).toBeVisible();
+  await shots(page, 'pricing-tab', [page.getByRole('region', { name: 'Pricing line 1' }), line2]);
+  // The server is still the judge: asked directly, it refuses the same publish.
+  expect((await page.request.post(`/api/questionnaire-versions/${versionId}/publish`)).status()).toBe(422);
+
+  // Fixed in the editor: a fixed rate of 15,000, saved; Publish comes back, and publishing works.
+  await line2.getByRole('combobox', { name: 'Rate', exact: true }).selectOption('fixed');
+  await line2.getByLabel('Rate: number').fill('15000');
+  await page.getByRole('button', { name: 'Save pricing' }).click();
+  await expect(line2.getByText(/counting needs/)).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Pricing', exact: true })).toBeVisible();
+  await expect(page.getByText(/Publishing waits until/)).toHaveCount(0);
+  await expect(publish).toBeEnabled();
+  await publish.click();
+  await expect(page.getByText('version 1 published', { exact: true })).toBeVisible();
+
+  // The client's answers: 120 employees, beyond the large-site band, so that line needs a price.
+  const { data: enquiry } = await (await page.request.post('/api/enquiries', { data: { client_name: `E2E Generated Client ${stamp}`, service: svc.name, status: 'New' } })).json();
+  const { data: sent } = await (await page.request.post('/api/questionnaire-responses', { data: { enquiry_no: enquiry.enquiry_no, questionnaire_id: form.id, send_email: false } })).json();
+  const token = new URL(sent.url).pathname.split('/q/')[1];
+  await page.request.put(`/api/public/questionnaire/${token}/answers`, { data: { step: 0, answers: { employee_count: 120 } } });
+  expect((await page.request.post(`/api/public/questionnaire/${token}/submit`, { data: { name: 'Asha Example', email: `asha-gen-${stamp}@example.com` } })).status()).toBe(200);
+
+  // Generate, from the enquiry's questionnaire.
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Submitted' }).first().click();
+  await page.getByRole('button', { name: 'Generate quotation' }).click();
+  await expect(page.getByText(/It stays a Draft: nothing goes to the client/)).toBeVisible();
+  await shots(page, 'generate-dialog', [page.getByRole('dialog')]);
+  await page.getByRole('dialog').getByRole('button', { name: 'Generate quotation' }).click();
+  await expect(page).toHaveURL(/\/quotations\//);
+
+  // The quotation: where it came from, what needs a price and why, and Send held back.
+  await expect(page.getByText(/Generated from the questionnaire answers on/)).toBeVisible();
+  await expect(page.getByText('Price needed', { exact: true })).toBeVisible();
+  await expect(page.getByText('"employee_count" is 120, outside every band')).toBeVisible();
+  await expect(page.getByText('1 line needs a price before this can go to the client').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send to the client' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Send acceptance link' })).toHaveCount(0);
+  await expect(page.getByText('Certification audit')).toBeVisible();
+  await shots(page, 'quotation-price-needed', [
+    page.getByText(/Generated from the questionnaire answers on/), page.getByText('Price needed', { exact: true }),
+    page.getByText('"employee_count" is 120, outside every band'), page.getByRole('button', { name: 'Enter rate' }).filter({ visible: true }),
+  ]);
+
+  // The rate goes in: the flag clears, Send and the acceptance link come back.
+  await page.getByRole('button', { name: 'Enter rate' }).filter({ visible: true }).click();
+  await page.getByLabel(/^Rate \(/).fill('8000');
+  await page.getByRole('button', { name: 'Save line' }).click();
+  await expect(page.getByText('Price needed', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send to the client' })).toBeEnabled();
+  await expect(page.getByText(/edited since/)).toBeVisible();
+  await shots(page, 'quotation-priced', [page.getByText(/edited since/), page.getByRole('button', { name: /lines? from these answers/ })]);
+
+  // It goes for acceptance, and the PDF opens.
+  const no = decodeURIComponent(new URL(page.url()).pathname.split('/quotations/')[1]);
+  const pdf = await page.request.get(`/api/quotations/${encodeURIComponent(no)}/pdf`);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()['content-type']).toContain('pdf');
+  await expect(page.getByRole('button', { name: 'Send acceptance link' })).toBeVisible();
+  const link = await page.request.post(`/api/quotations/${encodeURIComponent(no)}/acceptance-link`, { data: { email: false } });
+  expect([200, 201]).toContain(link.status());
+
+  // The Answers section: what the client said, read-only, and the way back to the enquiry's questionnaire.
+  await page.reload();
+  const answers = page.getByRole('button', { name: /lines? from these answers/ });
+  await expect(answers).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByText('Employees in scope')).toBeVisible();
+  const back = page.getByRole('link', { name: /Open the questionnaire on enquiry/ });
+  await expect(back).toHaveAttribute('href', `/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}&questionnaire=1`);
+  expect(await page.locator('section', { has: answers }).locator('input, textarea, select').count(), 'answers are read-only').toBe(0);
+  await back.click();
+  await expect(page.getByRole('dialog').getByText(`Questionnaire · ${enquiry.enquiry_no}`)).toBeVisible();
+  // Opened from a link, the dialog knows only the enquiry's number: Generate still finds the quotation and offers to revise it.
+  await page.getByRole('button', { name: 'Generate quotation' }).click();
+  await expect(page.getByRole('button', { name: `Revise ${no}` })).toBeVisible();
+  await expect(page.getByText(/is revised: its current version is kept in the history/)).toBeVisible();
+  // By keyboard: focus is inside the dialog, and Escape closes it alone, leaving the questionnaire open.
+  expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role=dialog]'))), 'focus moves into the dialog').toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: `Revise ${no}` })).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByText(`Questionnaire · ${enquiry.enquiry_no}`)).toBeVisible();
+
+  // For comparison when E2E_SHOTS is set: a quotation typed by hand, untouched by this feature.
+  if (process.env.E2E_SHOTS) {
+    const { data: hand } = await (await page.request.post('/api/quotations', { data: { client_name: `E2E Hand Client ${stamp}`, service_quoted: 'Consulting', status: 'Draft' } })).json();
+    await page.request.post('/api/quotation-lines', { data: { quotation_id: hand.id, description: 'Consulting', qty: 1, rate: 20000, gst_rate: 18 } });
+    await page.goto(`/quotations/${encodeURIComponent(hand.quotation_no)}`);
+    await expect(page.getByText('Consulting').first()).toBeVisible();
+    await shots(page, 'quotation-by-hand');
+  }
+});
+
+test('a questionnaire imported from a file: kept exactly, conditional headings work, a bad file is refused, and it stays a draft', async ({ page }) => {
+  await signIn(page);
+  const formFile = (name) => join(here, '..', '..', 'docs', 'questionnaires', `${name}.json`);
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Import ${stamp}` } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E imported questionnaire' } })).json();
+  const versionNow = async () => (await (await page.request.get(`/api/questionnaires/${form.id}`)).json()).data.versions[0];
+  const confirms = [];
+  page.on('dialog', (d) => { confirms.push(d.message()); d.accept(); });
+
+  await page.goto('/settings/templates');
+  await page.getByRole('button', { name: /Questionnaires/ }).first().click();
+  await page.getByText('E2E imported questionnaire').first().click();
+  const input = page.getByLabel('Questionnaire file to import');
+
+  // The ISO form goes in exactly as written, and stays a draft.
+  await input.setInputFiles(formFile('iso-audits'));
+  await expect(page.getByText('Imported from iso-audits.json: version 1 is still a draft')).toBeVisible();
+  expect(confirms.at(-1)).toMatch(/It stays a draft: nothing is published/);
+  let v = await versionNow();
+  expect(v.status).toBe('draft');
+  expect(v.definition).toEqual(JSON.parse(readFileSync(formFile('iso-audits'), 'utf8')));
+  await expect(page.getByText('Before it can be published')).toHaveCount(0);
+
+  // A guidance heading now takes a condition and help text in the builder.
+  await page.getByRole('button', { name: 'Food safety management (ISO 22000)' }).click();
+  const heading = page.locator('div.rounded-md', { has: page.getByRole('button', { name: 'Food safety management (ISO 22000)' }) });
+  await expect(heading.getByText('Show this question')).toBeVisible();
+  await expect(heading.getByRole('combobox').filter({ hasText: 'only if "Standard(s) applicable"' })).toHaveValue('standards');
+  await expect(heading.getByLabel('Help text')).toBeVisible();
+  await shots(page, 'import-builder', [page.getByRole('button', { name: 'Import from file' }), heading]);
+
+  // As the client: an ISO 9001 applicant never sees the food-safety section; one choosing ISO 22000 does.
+  await page.getByRole('button', { name: 'Preview as the client' }).click();
+  const preview = page.getByRole('dialog');
+  await preview.getByRole('radio', { name: 'New customer: a new registration' }).check();
+  await preview.getByRole('checkbox', { name: 'ISO 9001 Quality management' }).check();
+  await preview.getByRole('button', { name: 'Next' }).click();
+  await preview.getByLabel(/Name and legal form/).fill('Example Pvt Ltd');
+  await preview.getByLabel(/^Address/).fill('1 Example Road, Pune');
+  await preview.getByLabel(/Representative person/).fill('A. Person');
+  await preview.getByLabel(/^Email/).fill('a.person@example.com');
+  await preview.getByRole('button', { name: 'Next' }).click();
+  await preview.getByLabel(/Scope of certification/).fill('Manufacture of example parts');
+  await preview.getByLabel(/full-time employees/).fill('120');
+  if (!(await preview.getByLabel(/Site address/).count())) await preview.getByRole('button', { name: 'Add site' }).click();
+  await preview.getByLabel(/Site address/).first().fill('Pune');
+  await preview.getByLabel(/Number of employees/).first().fill('120');
+  await preview.getByRole('button', { name: 'Next' }).click();
+  await expect(preview.getByText('Do you currently hold a valid certificate')).toBeVisible();
+  await expect(preview.getByText('Food safety management (ISO 22000)')).toHaveCount(0);
+  await expect(preview.getByLabel(/Number of HACCPs/)).toHaveCount(0);
+  for (let i = 0; i < 3; i += 1) await preview.getByRole('button', { name: 'Back' }).click();
+  await preview.getByRole('checkbox', { name: 'ISO 22000 Food safety management' }).check();
+  for (let i = 0; i < 3; i += 1) await preview.getByRole('button', { name: 'Next' }).click();
+  await expect(preview.getByText('Food safety management (ISO 22000)')).toBeVisible();
+  await expect(preview.getByLabel(/Number of HACCPs/)).toBeVisible();
+  await shots(page, 'import-preview', [preview.getByText('Food safety management (ISO 22000)')]);
+  await page.keyboard.press('Escape');
+
+  // A file that is not JSON, and one the builder could not publish: both refused, the draft untouched.
+  await input.setInputFiles({ name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{"steps": [') });
+  await expect(page.getByRole('alert').filter({ hasText: 'broken.json was not imported: The file is not valid JSON' })).toBeVisible();
+  const bad = { steps: [{ key: 'a', title: 'A', questions: [{ key: 'x', type: 'radio', label: 'X', options: [{ key: '12_month', label: '12 months' }] }] }] };
+  await input.setInputFiles({ name: 'bad-keys.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(bad)) });
+  const refusal = page.getByRole('alert').filter({ hasText: 'bad-keys.json was not imported: This file is not a questionnaire the builder can take. The draft is unchanged.' });
+  await expect(refusal).toBeVisible();
+  await expect(refusal.getByText(/options\.0\.key: Lower-case letters/)).toBeVisible();
+  await expect(page.getByText('Before it can be published')).toHaveCount(0, { timeout: 1000 });
+  expect((await versionNow()).definition).toEqual(v.definition);
+
+  // Ecovadis replaces it, after saying so; then publishing is its own step, and a published version offers no import.
+  await input.setInputFiles(formFile('ecovadis'));
+  await expect(page.getByText('Imported from ecovadis.json: version 1 is still a draft')).toBeVisible();
+  expect(confirms.at(-1)).toMatch(/Replace the 60 questions in version 1 with the 36 from "ecovadis.json"/);
+  v = await versionNow();
+  expect(v.status).toBe('draft');
+  expect(v.definition).toEqual(JSON.parse(readFileSync(formFile('ecovadis'), 'utf8')));
+  await page.getByRole('button', { name: 'Publish version 1' }).click();
+  await expect(page.getByText('version 1 published', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import from file' })).toHaveCount(0);
+  expect((await page.request.post(`/api/questionnaire-versions/${v.id}/import`, { data: { definition: JSON.parse(readFileSync(formFile('iso-audits'), 'utf8')) } })).status()).toBe(409);
 });

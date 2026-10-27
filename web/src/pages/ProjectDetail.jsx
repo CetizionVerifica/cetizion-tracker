@@ -4,8 +4,9 @@ import { PageHeader } from '../App.jsx';
 import { ClipboardList, FileText, Flag, FolderKanban, Plane } from 'lucide-react';
 import { cn } from 'cn';
 import {
-  Chip, RailPerson, RecordFlow, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat, flowSteps,
+  Chip, RailPerson, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat,
 } from '../components/record.jsx';
+import { JourneyRail } from '../components/journey/JourneyRail.jsx';
 import { Checklist } from '../components/checklist.jsx';
 import { Button } from '../components/ui/button.tsx';
 import { ErrorState, useToast, ConfirmDialog } from '../components/ui.jsx';
@@ -16,6 +17,7 @@ import { ProjectVisits } from './Schedule.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
 import { money, date, number } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
 import { poRevisionFields } from '../lib/poRevision.js';
@@ -36,9 +38,14 @@ import { poRevisionFields } from '../lib/poRevision.js';
  * links to the order record, which is where stages belong (C6). The
  * project manager keeps exactly one button, the delivery date, because it
  * is the only fact on this page that moves money.
+ *
+ * The rail across the top is the sale the project delivers, Enquiry →
+ * Quotation → PO (docs/specs/sales-journey): the same journey its deal and
+ * its orders show. How far onboarding has got is the small print under it
+ * and the checklist below, not a second ladder.
  */
 
-/** The template's four stages, in order, as the ladder across the top. */
+/** The template's four stages, in order: the checklist's stage choices start here. */
 const LIFECYCLE = ['Onboarding', 'Execution', 'Delivery', 'Closure'];
 
 export default function ProjectDetail() {
@@ -65,7 +72,7 @@ export default function ProjectDetail() {
     return (
       <>
         <PageHeader title={projectId} />
-        <div className="page"><div className="skeleton" style={{ height: 200 }} /></div>
+        <div className="page"><div className="skeleton h-[200px]" /></div>
       </>
     );
   }
@@ -135,14 +142,6 @@ export default function ProjectDetail() {
     }
   }
 
-  // A lifecycle stage is done when every step under it is. Stages the
-  // template never used are left out rather than drawn as a gap.
-  const used = LIFECYCLE.filter((stage) => onboarding.some((s) => s.stage === stage));
-  const ladder = flowSteps(used.map((stage) => {
-    const steps = onboarding.filter((s) => s.stage === stage && s.effective_status !== 'N/A');
-    return { label: stage, done: steps.length > 0 && steps.every((s) => s.effective_status === 'Done') };
-  }));
-
   // What recording the delivery date would actually do, in money. The
   // design's sentence, computed rather than written: it is the reason the
   // button is the only one on the page.
@@ -188,8 +187,10 @@ export default function ProjectDetail() {
           </>
         )}
         flow={(
-          <RecordFlow
-            steps={ladder}
+          // What the page loaded is a new object each time it loads, so the
+          // rail reloads with it after every action taken here.
+          <JourneyRail
+            of={{ project: p.project_id }}
             verdict={verdict}
             actions={p.actual_delivery_date
               ? <Button variant="secondary" onClick={() => setDialog({ type: 'edit' })}>Edit the project</Button>
@@ -197,6 +198,7 @@ export default function ProjectDetail() {
             note={progress?.total
               ? `Onboarding · ${progress.done} of ${progress.total} done${progress.left ? ` · ${progress.left} left` : ''}${progress.waiting ? `, ${progress.waiting} of them with another team` : ''}.`
               : 'No checklist on this project yet.'}
+            refreshKey={data}
           />
         )}
         stats={(
@@ -435,9 +437,10 @@ export default function ProjectDetail() {
             { name: 'primary_service', label: 'Primary service', type: 'combo', options: lookups.services, span: 2 },
             { name: 'project_manager', label: 'Project manager' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
-            { name: 'sales_person', label: 'Sales person' },
+            { name: 'sales_person', label: 'Sales person', type: 'select', options: ownerOptions(lookups), hint: OWNER_HINT },
             { name: 'planned_start_date', label: 'Planned start', type: 'date' },
             { name: 'planned_delivery_date', label: 'Planned delivery', type: 'date' },
+            { name: 'service_request_no', label: 'Service request no.', hint: 'e.g. CV108: how a trip with no PO finds this project' },
             { name: 'percent_complete', label: '% complete', type: 'percent' },
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}

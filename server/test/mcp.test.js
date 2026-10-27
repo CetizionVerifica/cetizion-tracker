@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test, { after, before, describe } from 'node:test';
 import pg from 'pg';
 import request from 'supertest';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 
 /**
  * The MCP server (#50): a sales token sees only its person's records, an
@@ -98,12 +99,38 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
 
   const token = async (body) => (await request(app).post('/api/api-tokens').set('Cookie', staff).send(body).expect(201)).body.data;
   let id = 0;
-  async function call(tok, name, args = {}) {
+  const rpc = async (tok, method, params) => {
     id += 1;
-    const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${tok}`).set('Accept', 'application/json, text/event-stream')
-      .send({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } });
+    return request(app).post('/api/mcp').set('Authorization', `Bearer ${tok}`).set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id, method, params });
+  };
+  /**
+   * What a real MCP client does with a tool's answer (#243): it reads the
+   * outputSchema the server published in tools/list and validates
+   * structuredContent against it with the SDK's own validator, throwing the
+   * answer away when it does not match. The server's own check accepted extra
+   * keys (Zod only drops them from a parse result the SDK discards), while
+   * the JSON Schema it published forbade them, so the server passed and
+   * Claude Desktop rejected nine tools. Every call in this file is checked
+   * the client's way.
+   */
+  const published = new Map();   // token -> tool name -> its published outputSchema
+  const validator = new AjvJsonSchemaValidator();
+  async function clientCheck(tok, name, structured) {
+    if (!published.has(tok)) {
+      const listed = await rpc(tok, 'tools/list', {});
+      published.set(tok, new Map(listed.body.result.tools.map((t) => [t.name, t.outputSchema])));
+    }
+    const schema = published.get(tok).get(name);
+    if (!schema) return;
+    const r = validator.getValidator(schema)(structured);
+    assert.ok(r.valid, `${name}: an MCP client would reject this answer: ${r.errorMessage}`);
+  }
+  async function call(tok, name, args = {}) {
+    const res = await rpc(tok, 'tools/call', { name, arguments: args });
     if (res.status !== 200) return { status: res.status };
     const r = res.body.result;
+    if (!r.isError && r.structuredContent !== undefined) await clientCheck(tok, name, r.structuredContent);
     return { status: 200, error: Boolean(r.isError), text: r.content.map((c) => c.text).join('\n'), structured: r.structuredContent, raw: r };
   }
 
@@ -136,6 +163,8 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       ['list_payables', {}],
       ['list_data_gaps', {}],
       ['list_tasks', {}],
+      ['describe_aggregate', {}],
+      ['describe_aggregate', { entity: 'quotations' }],
     ];
     for (const [name, args] of calls) {
       const r = await call(t, name, args);
@@ -150,6 +179,15 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const closed = await call(t, 'complete_task', { task_id: open.items[0].id });
     assert.equal(closed.error, false, closed.text);
     assert.ok(closed.structured !== undefined, 'complete_task declares a schema, so it must return one');
+  });
+
+  test('every listed tool publishes an output schema, so none escapes the client-side check', async () => {
+    // clientCheck skips a tool with no outputSchema; this keeps that from hiding one quietly (#243).
+    const t = (await token({ name: 'Listed schemas', role: 'admin', can_write: true })).token;
+    const { tools } = (await rpc(t, 'tools/list', {})).body.result;
+    assert.ok(tools.length >= 20, `an admin token that may write sees every tool (${tools.length})`);
+    assert.deepEqual(tools.filter((x) => !x.outputSchema).map((x) => x.name), [], 'each tool says what it gives back');
+    for (const x of tools) assert.notEqual(x.outputSchema.additionalProperties, false, `${x.name}: a field the schema does not name must not make a client reject the answer`);
   });
 
   test('a list says how much it did not return, and the next page differs', async () => {

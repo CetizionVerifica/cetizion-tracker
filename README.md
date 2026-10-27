@@ -143,10 +143,16 @@ Two modes, chosen by `AUTH_MODE`.
 roles; everybody who signs in is an admin. Good for a small deployment and the default in
 development.
 
-**`database`** — real accounts in a `users` table, each `admin` or `sales`, with
+**`database`** — real accounts in a `users` table, each `admin`, `sales` or `hr`, with
 per-person sessions you can see and revoke from **My account**. People can also sign in
 with **Microsoft** or **Google** when those are configured, and link either to an
 existing account.
+
+| Role | Reaches |
+| --- | --- |
+| `admin` | Everything |
+| `sales` | Their own enquiries, quotations, projects and POs, and the shared lists |
+| `hr` | The travel desk only: trips, agency invoices and credit notes, the travel dashboard and payables, the travel vendor and trip type lists, and the travel import ([docs/travel-import.md](docs/travel-import.md)). POs and projects only as far as linking a trip needs |
 
 What holds in both:
 
@@ -340,6 +346,7 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | `deliverables.daily` | 07:50 daily | Marks expired certificates; reminds owners before expiry |
 | `notifications.daily` | 08:00 daily | Raises notifications for tasks, follow-ups, approvals, overdue invoices, renewals |
 | `quotations.expire` | 08:15 daily | Marks quotations past their validity as lost |
+| `questionnaires.remind` | 10:30 daily | Reminds clients who have not submitted a service questionnaire, after the days in Settings, at most twice, never after the link expires (#208) |
 | `notifications.digest` | 08:30 weekdays | Each person's digest of what is waiting for them |
 | `renewals.daily` | 08:45 daily | Opens renewal quotations inside the lead time |
 | `reminders.payment` | 09:00 weekdays | One email per client with overdue invoices, at most once per `reminder_interval_days` |

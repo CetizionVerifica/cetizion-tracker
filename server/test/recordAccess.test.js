@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
-  ENTITY_RECORDS, UNRESTRICTED, documentClause, parentClause, recordReachableSql,
+  ENTITY_RECORDS, TRAVEL_FILE_ENTITIES, UNRESTRICTED, documentClause, parentClause, recordReachableSql,
 } from '../src/auth/ownership.js';
 import { resources } from '../src/lib/resources.js';
 
@@ -109,8 +109,10 @@ describe('rows that name their parent in text', () => {
     for (const entity of Object.keys(ENTITY_RECORDS)) {
       assert.ok(sql.includes(`WHEN '${entity}' THEN`), `no branch for ${entity}`);
     }
+    // Plus the travel records, which carry files and nothing else (#196): open to everybody signed in.
+    for (const entity of TRAVEL_FILE_ENTITIES) assert.ok(sql.includes(`WHEN '${entity}' THEN true`), `no branch for ${entity}`);
     const branches = (sql.match(/WHEN '/g) || []).length;
-    assert.equal(branches, Object.keys(ENTITY_RECORDS).length, 'a branch per kind, no more');
+    assert.equal(branches, Object.keys(ENTITY_RECORDS).length + TRAVEL_FILE_ENTITIES.length, 'a branch per kind, no more');
   });
 
   test('shared master data stays reachable; an unknown kind does not', () => {

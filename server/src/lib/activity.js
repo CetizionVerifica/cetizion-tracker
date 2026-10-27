@@ -30,8 +30,12 @@ export const ACTIONS = {
   USER_DEACTIVATED: 'user.deactivated',
   USER_REACTIVATED: 'user.reactivated',
   COMPANY_MERGED: 'company.merged',
+  // Owner spellings folded into one (lib/owners.js).
+  OWNER_MERGED: 'owner.merged',
   JOB_RUN: 'job.run',
   EMAIL_TEST_SENT: 'email.test_sent',
+  // An admin held or released the emails that go to clients (lib/clientEmails.js).
+  CLIENT_EMAILS_CHANGED: 'client_emails.changed',
   // Who a record belongs to, and what it is measured against (#18).
   OWNERSHIP_ASSIGNED: 'ownership.assigned',
   OWNERSHIP_REASSIGNED: 'ownership.reassigned',
@@ -47,6 +51,14 @@ export const ACTIONS = {
   CLAIM_REIMBURSED: 'claim.reimbursed',
   CLAIM_CORRECTED: 'claim.corrected',
   VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
+  // Which client invoice a trip's cost was billed on (#214). The link is
+  // what makes a trip's cost recoverable, so it moves through its own
+  // route and leaves the account that moved it behind.
+  TRIP_BILLED_STAGE_SET: 'travel_log.billed_stage_set',
+  // A vendor payment taken back off the invoice (#214). Payments are a
+  // ledger, so a correction is a row rather than a rewrite — but the row
+  // alone does not say who decided it or why, which is what this is for.
+  VENDOR_INVOICE_PAY_CORRECTED: 'vendor_invoice.payment_corrected',
   // A quotation read from the PDF we emailed, checked against it by a person
   // (docs/email-enquiries-plan.md §3.9.6).
   QUOTATION_EMAIL_READ_CHECKED: 'quotation.email_read_checked',
@@ -59,6 +71,18 @@ export const ACTIONS = {
   // Who a personal mailbox belongs to, changed by an admin
   // (docs/per-user-mailboxes-plan.md §4.3). Records already made stay put.
   MAILBOX_OWNER_CHANGED: 'mailbox.owner_changed',
+  // Somebody opened an email's attachment in the Inbox's viewer
+  // (docs/inbox-attachments-plan.md §8): attachments are viewed, never
+  // downloaded, and an admin can see who looked at what.
+  MAIL_ATTACHMENT_VIEWED: 'mail.attachment_viewed',
+  // Who did what to the sales records (mis-report-sender-plan.md §B3.2):
+  // the facts a person's daily MIS reads as their Actions taken. Written by
+  // src/lib/recordActs.js in the transaction of the change.
+  RECORD_CREATED: 'record.created',
+  RECORD_UPDATED: 'record.updated',
+  QUOTATION_STAGE_CHANGED: 'quotation.stage_changed',
+  PAYMENT_RECORDED: 'payment.recorded',
+  INVOICE_RAISED: 'invoice.raised',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */

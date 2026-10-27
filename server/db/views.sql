@@ -13,8 +13,8 @@
 BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
-  v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices,
-  v_employee_expense_claims, v_company_document_profiles CASCADE;
+  v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices, v_travel_invoice_lines, v_travel_segments,
+  v_employee_expense_claims, v_company_document_profiles, v_questionnaire_responses, v_sales_journey CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
 -- breaks a view the way a broken cell reference would.
@@ -24,6 +24,66 @@ RETURNS numeric AS $$
     (SELECT NULLIF(regexp_replace(value, '[^0-9.\-]', '', 'g'), '')::numeric
        FROM settings WHERE key = p_key),
     p_default);
+$$ LANGUAGE sql STABLE;
+
+-- The GST inside an amount that includes it (#198 §5). Nothing is stored:
+-- a PO's value, and so every invoice (a share of it), is a total including
+-- GST, grossed up at the quotation's own rates when the PO was registered.
+-- A client's books keep taxable value and GST apart, so the portal shows the
+-- split, worked out here, in one place, for the portal, its statement and
+-- the staff preview alike:
+--   1. An invoice matched to the accounts import (#48) whose total agrees:
+--      the books' own taxable value and GST. The books are the legal record.
+--   2. Otherwise the PO's effective rate from its quotation's lines,
+--      Σ(amount × gst_rate) / Σ(amount): the PO's own quotation, or the won
+--      quotations of its project when the PO names none.
+--   3. No quotation lines: the gst_rate_default setting, marked estimated
+--      (staff see that; the client does not).
+--   4. A PO in another currency (an export): no GST.
+-- Taxable is the total over (1 + rate), to the paisa; GST takes what is left,
+-- so taxable + GST is always exactly the total.
+CREATE OR REPLACE FUNCTION po_gst_split(p_po text, p_total numeric, p_stage int DEFAULT NULL)
+RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $$
+  WITH books AS (
+    SELECT b.taxable_amount AS b_taxable, b.tax_amount AS b_gst
+      FROM reconciliation_items ri JOIN books_entries b ON b.id = ri.books_entry_id
+     WHERE p_stage IS NOT NULL AND ri.stage_id = p_stage AND ri.kind = 'invoice'
+       AND b.taxable_amount IS NOT NULL AND b.tax_amount IS NOT NULL
+       AND abs(b.taxable_amount + b.tax_amount - p_total) <= 1
+     ORDER BY ri.checked_at DESC
+     LIMIT 1
+  ), rate AS (
+    SELECT CASE WHEN po.currency <> 'INR' THEN 0
+                WHEN q.base > 0 THEN round(q.taxed / q.base, 2)
+                ELSE setting_num('gst_rate_default', 18) END AS r_rate,
+           -- The same rate unrounded, for the arithmetic. Rounding it first
+           -- (16.82 for 18% and 5% lines) took paise off the taxable value;
+           -- unrounded, total / (1 + rate) is exactly what splitting the
+           -- total per rate gives (lib/accounting/stageGst.js), so the
+           -- portal, GSTR-1 and the invoice draft agree to the paisa.
+           CASE WHEN po.currency <> 'INR' THEN 0
+                WHEN q.base > 0 THEN q.taxed / q.base
+                ELSE setting_num('gst_rate_default', 18) END AS r_exact,
+           CASE WHEN po.currency <> 'INR' THEN 'export'
+                WHEN q.base > 0 THEN 'quotation'
+                ELSE 'estimated' END AS r_source
+      FROM purchase_orders po
+      LEFT JOIN LATERAL (
+        SELECT SUM(l.amount) AS base, SUM(l.amount * l.gst_rate) AS taxed
+          FROM quotations qt JOIN quotation_lines l ON l.quotation_id = qt.id
+         WHERE qt.quotation_no = po.quotation_no
+            OR (po.quotation_no IS NULL AND qt.project_id = po.project_id AND qt.status = 'Won - PO Received')
+      ) q ON true
+     WHERE po.po_number = p_po
+  )
+  SELECT x_taxable, x_gst, x_rate, x_source FROM (
+    SELECT 1 AS pref, b_taxable AS x_taxable, b_gst AS x_gst,
+           round(b_gst * 100 / NULLIF(b_taxable, 0), 2) AS x_rate, 'books'::text AS x_source
+      FROM books
+    UNION ALL
+    SELECT 2, round(p_total / (1 + r_exact / 100), 2), p_total - round(p_total / (1 + r_exact / 100), 2), r_rate, r_source
+      FROM rate
+  ) x ORDER BY pref LIMIT 1;
 $$ LANGUAGE sql STABLE;
 
 -- ---------------------------------------------------------------------
@@ -133,21 +193,75 @@ CROSS JOIN LATERAL (
 ) d(days_overdue, invoiced_amount, due_now_amount, to_bill_amount, received_on_invoiced);
 
 -- ---------------------------------------------------------------------
+-- Travel vendor invoice lines (#196)
+--   One travel agency invoice covers several legs, trips and people, one
+--   line each. What was paid on the invoice, and what its credit notes gave
+--   back, are shared over its lines by their amounts — a credit note naming
+--   a leg goes to that leg's line — so a trip's cost and payments add up to
+--   the invoices', and nothing is counted twice.
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_travel_invoice_lines AS
+WITH lines AS (
+  SELECT l.*, vi.vendor_id, vi.vendor_invoice_id AS vendor_invoice_ref, vi.vendor_invoice_no, vi.invoice_date,
+         vi.amount_paid AS invoice_paid,
+         SUM(COALESCE(l.line_total, 0)) OVER w AS lines_total,
+         COUNT(*) OVER w                       AS line_count
+    FROM travel_vendor_invoice_lines l
+    JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
+  WINDOW w AS (PARTITION BY l.vendor_invoice_id)
+),
+-- A line's share of its invoice: by amount, or evenly while no line has
+-- one; and the credit notes that fall to it.
+credited AS (
+  SELECT lines.*,
+         CASE WHEN lines_total > 0 THEN COALESCE(line_total, 0) / lines_total ELSE 1.0 / line_count END AS share,
+         round(COALESCE(cn.on_line, 0) + COALESCE(cn.shared, 0)
+               * CASE WHEN lines_total > 0 THEN COALESCE(line_total, 0) / lines_total ELSE 1.0 / line_count END, 2) AS credited
+    FROM lines
+    CROSS JOIN LATERAL (
+      SELECT SUM(c.refund_amount) FILTER (WHERE c.segment_id IS NOT NULL AND c.segment_id = lines.segment_id),
+             SUM(c.refund_amount) FILTER (WHERE c.segment_id IS NULL
+               OR NOT EXISTS (SELECT 1 FROM travel_vendor_invoice_lines y
+                               WHERE y.vendor_invoice_id = c.against_invoice_id AND y.segment_id = c.segment_id))
+        FROM travel_vendor_credit_notes c WHERE c.against_invoice_id = lines.vendor_invoice_id
+    ) cn(on_line, shared)
+),
+-- What was paid on the invoice goes to its lines by what each costs after
+-- credit notes, so a refunded leg is not shown as paid for.
+netted AS (
+  SELECT credited.*,
+         SUM(GREATEST(COALESCE(line_total, 0) - credited, 0)) OVER (PARTITION BY vendor_invoice_id) AS nets_total
+    FROM credited
+)
+SELECT
+  id, vendor_invoice_id, travel_id, segment_id, base_fare, service_charge, gst_amount, gst_rate, line_total, remarks,
+  vendor_id, vendor_invoice_ref, vendor_invoice_no, invoice_date, share,
+  round(invoice_paid * CASE WHEN nets_total > 0 THEN GREATEST(COALESCE(line_total, 0) - credited, 0) / nets_total ELSE share END, 2) AS paid,
+  credited,
+  line_total - credited                                   AS net_cost
+FROM netted;
+
+-- ---------------------------------------------------------------------
 -- Travel vendor invoices
 --   Vendor bills within the settings window; finance pays by month-end.
+--   An invoice's trip, client and traveller come from its lines (#196):
+--   one value when every line agrees, the travellers listed when several.
+--   What is owed is the invoice less its credit notes.
 -- ---------------------------------------------------------------------
 
 CREATE VIEW v_travel_vendor_invoices AS
 SELECT
   vi.id,
   vi.vendor_invoice_id,
-  vi.travel_id,
-  tl.po_number,
-  po.project_id,
-  pr.client_name,
-  tl.employee_name,
-  tl.travel_end_date,
-  tl.arranged_by                                          AS travel_vendor,
+  COALESCE(vi.travel_id, tr.only_trip)                    AS travel_id,
+  tr.po_number,
+  tr.project_id,
+  tr.client_name,
+  tr.employee_name,
+  tr.travel_end_date,
+  COALESCE(tv.name, tr.arranged_by)                       AS travel_vendor,
+  vi.vendor_id,
   vi.vendor_invoice_no,
   vi.invoice_date,
   vi.invoice_amount,
@@ -155,32 +269,40 @@ SELECT
   vi.amount_paid,
   vi.payment_date,
   vi.remarks,
+  vi.document_id,
+  doc.file_name                                           AS document_name,
+  vi.vendor_gstin_on_invoice,
+  vi.place_of_supply,
+  COALESCE(tr.trip_count, 0)::int                         AS trip_count,
+  COALESCE(tr.line_count, 0)::int                         AS line_count,
+  COALESCE(cn.credited, 0)                                AS credited,
+  vi.invoice_amount - COALESCE(cn.credited, 0)            AS net_payable,
   CASE
     WHEN vi.vendor_invoice_no IS NULL OR vi.invoice_date IS NULL
-      OR tl.travel_end_date IS NULL                       THEN NULL
-    WHEN vi.invoice_date - tl.travel_end_date
+      OR tr.travel_end_date IS NULL                       THEN NULL
+    WHEN vi.invoice_date - tr.travel_end_date
            <= setting_num('vendor_invoice_window_days', 15) THEN 'On time'
-    ELSE 'Late (' || (vi.invoice_date - tl.travel_end_date) || 'd)'
+    ELSE 'Late (' || (vi.invoice_date - tr.travel_end_date) || 'd)'
   END                                                     AS raised_in_time,
   b.pay_by,
   (vi.vendor_invoice_no IS NOT NULL
      AND vi.invoice_amount IS NOT NULL
-     AND vi.amount_paid < vi.invoice_amount)              AS finance_to_pay,
+     AND vi.amount_paid < vi.invoice_amount - COALESCE(cn.credited, 0)) AS finance_to_pay,
   s.payment_status,
   d.days_overdue,
   CASE s.payment_status
     WHEN 'Awaited' THEN 'Awaiting vendor invoice'
-      || CASE WHEN tl.travel_end_date IS NOT NULL
-                AND CURRENT_DATE > tl.travel_end_date
+      || CASE WHEN tr.travel_end_date IS NOT NULL
+                AND CURRENT_DATE > tr.travel_end_date
                      + setting_num('vendor_invoice_window_days', 15)::int
               THEN ' - OVERDUE from vendor' ELSE '' END
-    WHEN 'Overdue' THEN 'FINANCE: pay ' || COALESCE(tl.arranged_by, 'vendor')
+    WHEN 'Overdue' THEN 'FINANCE: pay ' || COALESCE(tv.name, tr.arranged_by, 'vendor')
       || ' NOW - overdue by ' || d.days_overdue || ' day(s)'
     WHEN 'To Pay' THEN 'FINANCE: vendor invoice received - pay '
-      || COALESCE(tl.arranged_by, 'vendor')
+      || COALESCE(tv.name, tr.arranged_by, 'vendor')
       || ' by month-end (' || to_char(b.pay_by, 'DD-Mon') || ')'
     WHEN 'Partially Paid' THEN 'FINANCE: pay balance to '
-      || COALESCE(tl.arranged_by, 'vendor')
+      || COALESCE(tv.name, tr.arranged_by, 'vendor')
     WHEN 'Enter amount' THEN 'HR: enter the invoice amount'
     WHEN 'Enter date' THEN 'HR: enter the invoice date - it sets the pay-by date'
   END                                                     AS finance_action,
@@ -193,9 +315,30 @@ SELECT
     ELSE 'neutral'
   END                                                     AS status_tone
 FROM travel_vendor_invoices vi
-JOIN travel_logs          tl ON tl.travel_id  = vi.travel_id
-LEFT JOIN purchase_orders po ON po.po_number  = tl.po_number
-LEFT JOIN projects        pr ON pr.project_id = po.project_id
+LEFT JOIN travel_vendors tv ON tv.id = vi.vendor_id
+LEFT JOIN documents doc ON doc.id = vi.document_id
+LEFT JOIN LATERAL (
+  SELECT CASE WHEN COUNT(DISTINCT l.travel_id) = 1 THEN MIN(l.travel_id) END       AS only_trip,
+         COUNT(DISTINCT l.travel_id)                                               AS trip_count,
+         COUNT(*)                                                                  AS line_count,
+         CASE WHEN COUNT(DISTINCT t.po_number) = 1
+               AND COUNT(*) FILTER (WHERE t.po_number IS NULL) = 0 THEN MIN(t.po_number) END AS po_number,
+         CASE WHEN COUNT(DISTINCT COALESCE(po.project_id, t.project_id)) = 1
+               AND COUNT(*) FILTER (WHERE COALESCE(po.project_id, t.project_id) IS NULL) = 0
+              THEN MIN(COALESCE(po.project_id, t.project_id)) END                  AS project_id,
+         string_agg(DISTINCT COALESCE(pr.client_name, t.client_label), ', ')       AS client_name,
+         string_agg(DISTINCT t.employee_name, ', ')                                AS employee_name,
+         MAX(t.travel_end_date)                                                    AS travel_end_date,
+         MIN(t.arranged_by)                                                        AS arranged_by
+    FROM travel_vendor_invoice_lines l
+    JOIN travel_logs t            ON t.travel_id   = l.travel_id
+    LEFT JOIN purchase_orders po  ON po.po_number  = t.po_number
+    LEFT JOIN projects pr         ON pr.project_id = COALESCE(po.project_id, t.project_id)
+   WHERE l.vendor_invoice_id = vi.id
+) tr ON true
+CROSS JOIN LATERAL (
+  SELECT SUM(refund_amount) FROM travel_vendor_credit_notes c WHERE c.against_invoice_id = vi.id
+) cn(credited)
 -- Vendor bills are settled at the month-end following the invoice date.
 CROSS JOIN LATERAL (
   SELECT (date_trunc('month', vi.invoice_date)
@@ -205,7 +348,7 @@ CROSS JOIN LATERAL (
   SELECT CASE
     WHEN vi.vendor_invoice_no IS NULL        THEN 'Awaited'
     WHEN vi.invoice_amount IS NULL           THEN 'Enter amount'
-    WHEN vi.amount_paid >= vi.invoice_amount THEN 'Paid'
+    WHEN vi.amount_paid >= vi.invoice_amount - COALESCE(cn.credited, 0) THEN 'Paid'
     -- No invoice date means no pay-by date, so the bill can never fall
     -- due and would otherwise sit here unnoticed. Chase the date.
     WHEN vi.invoice_date IS NULL             THEN 'Enter date'
@@ -255,8 +398,9 @@ SELECT
   v.invoice_amount,
   v.amount_paid,
   -- NULL, not zero, when the amount was never entered: a gap to fill,
-  -- not a bill that costs nothing.
-  v.invoice_amount - v.amount_paid                        AS outstanding,
+  -- not a bill that costs nothing. Less what credit notes gave back (#196).
+  v.net_payable - v.amount_paid                           AS outstanding,
+  v.credited,
   v.pay_by,
   v.payment_status,
   v.days_overdue,
@@ -336,16 +480,30 @@ SELECT
   tl.id,
   tl.travel_id,
   tl.po_number,
-  po.project_id,
-  pr.client_name,
+  -- The PO's project, or the trip's own when it has no PO (#196).
+  COALESCE(po.project_id, tl.project_id)                   AS project_id,
+  -- The project's client, else the label an internal trip carries.
+  COALESCE(pr.client_name, tl.client_label)                AS client_name,
+  pr.service_request_no,
   tl.service_delivered,
   tl.employee_name,
   tl.employee_email,
+  tl.staff_id,
   tl.purpose,
+  tl.origin,
   tl.destination,
   tl.travel_start_date,
   tl.travel_end_date,
-  tl.arranged_by,
+  tl.booking_date,
+  tl.cancelled,
+  tl.vendor_id,
+  COALESCE(tv.name, tl.arranged_by)                        AS arranged_by,
+  tl.trip_type_id,
+  tt.name                                                  AS trip_type,
+  tt.chargeable,
+  tl.billed_stage_id,
+  bs.invoice_no                                            AS billed_invoice_no,
+  tl.client_label,
   tl.hr_owner,
   tl.hr_owner_email,
   tl.remarks,
@@ -358,6 +516,15 @@ SELECT
   c.employee_reimbursed,
   c.claim_count,
   v.vendor_cost + c.employee_claims                        AS total_travel_cost,
+  g.leg_count,
+  g.modes,
+  f.document_count,
+  -- What a trip still needs on file: a ticket for a chargeable trip, and
+  -- the agency's invoice for every trip that went ahead.
+  CASE WHEN tl.cancelled THEN '{}'::text[] ELSE array_remove(ARRAY[
+    CASE WHEN tt.chargeable AND NOT f.has_ticket THEN 'ticket' END,
+    CASE WHEN NOT f.has_vendor_invoice THEN 'vendor invoice' END
+  ], NULL) END                                             AS missing_documents,
   CASE
     WHEN v.vendor_invoice_count = 0 THEN
       CASE
@@ -379,19 +546,58 @@ SELECT
   END                                                      AS reimbursement_status
 FROM travel_logs tl
 LEFT JOIN purchase_orders po ON po.po_number  = tl.po_number
-LEFT JOIN projects        pr ON pr.project_id = po.project_id
+LEFT JOIN projects        pr ON pr.project_id = COALESCE(po.project_id, tl.project_id)
+LEFT JOIN travel_vendors  tv ON tv.id         = tl.vendor_id
+LEFT JOIN trip_types      tt ON tt.id         = tl.trip_type_id
+LEFT JOIN payment_stages  bs ON bs.id         = tl.billed_stage_id
+-- The agency's cost of the trip: its share of every invoice line, less
+-- credit notes, and what was paid on it (v_travel_invoice_lines, #196).
 CROSS JOIN LATERAL (
-  SELECT COALESCE(SUM(invoice_amount), 0),
-         COALESCE(SUM(amount_paid), 0),
-         COUNT(*)
-  FROM travel_vendor_invoices vi WHERE vi.travel_id = tl.travel_id
+  SELECT COALESCE(SUM(net_cost), 0),
+         COALESCE(SUM(paid), 0),
+         COUNT(DISTINCT vendor_invoice_id)::int
+  FROM v_travel_invoice_lines l WHERE l.travel_id = tl.travel_id
 ) v(vendor_cost, vendor_paid, vendor_invoice_count)
 CROSS JOIN LATERAL (
   SELECT COALESCE(SUM(amount_claimed), 0),
          COALESCE(SUM(amount_reimbursed), 0),
          COUNT(*)
   FROM employee_expense_claims ec WHERE ec.travel_id = tl.travel_id
-) c(employee_claims, employee_reimbursed, claim_count);
+) c(employee_claims, employee_reimbursed, claim_count)
+CROSS JOIN LATERAL (
+  SELECT COUNT(*)::int, array_remove(array_agg(DISTINCT mode), NULL)
+  FROM travel_segments s WHERE s.travel_id = tl.travel_id
+) g(leg_count, modes)
+CROSS JOIN LATERAL (
+  SELECT
+    ((SELECT COUNT(*) FROM attachments a WHERE a.entity = 'travel_log' AND a.entity_id = tl.travel_id)
+      + (SELECT COUNT(DISTINCT vi.document_id) FROM travel_vendor_invoice_lines l
+           JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
+          WHERE l.travel_id = tl.travel_id AND vi.document_id IS NOT NULL))::int,
+    EXISTS (SELECT 1 FROM attachments a WHERE a.entity = 'travel_log' AND a.entity_id = tl.travel_id
+              AND a.doc_type IN ('ticket','boarding_pass')),
+    EXISTS (SELECT 1 FROM travel_vendor_invoice_lines l
+              JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
+             WHERE l.travel_id = tl.travel_id
+               AND (vi.document_id IS NOT NULL
+                 OR EXISTS (SELECT 1 FROM attachments a WHERE a.entity = 'travel_vendor_invoice' AND a.entity_id = vi.id::text)))
+      OR EXISTS (SELECT 1 FROM attachments a WHERE a.entity = 'travel_log' AND a.entity_id = tl.travel_id AND a.doc_type = 'vendor_invoice')
+) f(document_count, has_ticket, has_vendor_invoice);
+
+-- ---------------------------------------------------------------------
+-- Travel legs (#196) — flights, trains, buses, cabs and hotel stays
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_travel_segments AS
+SELECT
+  s.*,
+  -- Hotel nights, computed: check-out less check-in.
+  CASE WHEN s.mode = 'hotel' THEN s.end_date - s.start_date END AS nights,
+  tl.employee_name,
+  tl.po_number,
+  tl.cancelled AS trip_cancelled
+FROM travel_segments s
+JOIN travel_logs tl ON tl.travel_id = s.travel_id;
 
 -- ---------------------------------------------------------------------
 -- Purchase orders — totals its service lines, stages and trips
@@ -489,6 +695,8 @@ CREATE VIEW v_projects AS
 SELECT
   p.id,
   p.project_id,
+  -- CV108: how a trip with no PO finds this project (#196).
+  p.service_request_no,
   p.client_name,
   p.company_id,
   p.created_at,
@@ -512,7 +720,8 @@ SELECT
   po.balance_due_now,
   po.balance_to_bill,
   po.currency,
-  po.total_travel_cost,
+  -- Through its POs, and trips on the project with no PO (#196).
+  po.total_travel_cost + dt.direct_travel_cost             AS total_travel_cost,
   po.actual_initiation_date,
   po.actual_delivery_date,
   CASE WHEN po.actual_delivery_date IS NOT NULL AND p.planned_delivery_date IS NOT NULL
@@ -574,6 +783,10 @@ CROSS JOIN LATERAL (
      balance_due_now, balance_to_bill, total_travel_cost, currency, fully_paid_pos,
      actual_initiation_date, actual_delivery_date)
 CROSS JOIN LATERAL (
+  SELECT COALESCE(SUM(total_travel_cost), 0) FROM v_travel_logs t
+   WHERE t.po_number IS NULL AND t.project_id = p.project_id
+) dt(direct_travel_cost)
+CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE status = 'Done'),
          COUNT(*) FILTER (WHERE status <> 'N/A'),
          COALESCE(COUNT(*) FILTER (WHERE status = 'Done')::numeric
@@ -632,6 +845,14 @@ SELECT
   q.accepted_at,
   q.accepted_by_name,
   (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count,
+  -- Generated from a questionnaire's answers (#208 phase 2): computed here, never stored.
+  q.questionnaire_response_id,
+  q.generated_at,
+  (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id AND ql.price_needed) AS price_needed_count,
+  -- Each generated line against its own creation: a later service's generation does not hide an earlier edit (D12).
+  (q.generated_at IS NOT NULL AND EXISTS (
+     SELECT 1 FROM quotation_lines ql
+      WHERE ql.quotation_id = q.id AND ql.generated AND ql.updated_at > ql.created_at)) AS edited_since_generated,
   q.stage_id,
   st.name                                     AS stage,
   st.type                                     AS stage_type,
@@ -787,15 +1008,20 @@ po AS (
     ) r ON true
    GROUP BY v.project_id
 ),
+-- A trip counts against its PO's project, or its own project when it has
+-- no PO (#196).
 trips AS (
-  SELECT t.travel_id, p.project_id FROM travel_logs t JOIN purchase_orders p ON p.po_number = t.po_number
+  SELECT t.travel_id, COALESCE(p.project_id, t.project_id) AS project_id
+    FROM travel_logs t LEFT JOIN purchase_orders p ON p.po_number = t.po_number
+   WHERE COALESCE(p.project_id, t.project_id) IS NOT NULL
 ),
+-- Each trip's share of the agency's invoices, net of credit notes.
 vendors AS (
   SELECT tr.project_id,
-         SUM(vi.amount_paid) AS paid,
-         SUM(GREATEST(COALESCE(vi.invoice_amount, vi.amount_paid) - vi.amount_paid, 0)) AS committed,
-         COUNT(*) FILTER (WHERE vi.invoice_amount IS NULL) AS gaps
-    FROM travel_vendor_invoices vi JOIN trips tr ON tr.travel_id = vi.travel_id
+         SUM(l.paid) AS paid,
+         SUM(GREATEST(COALESCE(l.net_cost, l.paid) - l.paid, 0)) AS committed,
+         COUNT(*) FILTER (WHERE l.line_total IS NULL) AS gaps
+    FROM v_travel_invoice_lines l JOIN trips tr ON tr.travel_id = l.travel_id
    GROUP BY tr.project_id
 ),
 claims AS (
@@ -872,14 +1098,224 @@ CREATE VIEW v_enquiries AS
 SELECT
   e.*,
   ct.email AS contact_email,
-  ct.phone AS contact_phone
+  ct.phone AS contact_phone,
+  -- The latest questionnaire sent for it (#208), for the list's column.
+  qr.id AS questionnaire_response_id,
+  qr.status AS questionnaire_status
 FROM enquiries e
-LEFT JOIN contacts ct ON ct.id = e.contact_id;
+LEFT JOIN contacts ct ON ct.id = e.contact_id
+LEFT JOIN LATERAL (
+  SELECT r.id, r.status FROM questionnaire_responses r
+   WHERE r.enquiry_id = e.id AND r.status <> 'withdrawn'
+   ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+) qr ON true;
+
+-- A questionnaire response with its form and the state of its links
+-- (#208): whether a link is open, opened, expired or revoked is worked
+-- out here from the links, never stored.
+CREATE VIEW v_questionnaire_responses AS
+SELECT
+  r.*,
+  q.id AS questionnaire_id, q.name AS questionnaire_name, s.id AS service_id, s.name AS service_name,
+  v.version, jsonb_array_length(COALESCE(v.definition->'steps', '[]'::jsonb)) AS step_count,
+  e.enquiry_no, COALESCE(co.name, e.client_name) AS client_name,
+  ls.open_links, ls.expires_at, ls.first_opened_at, ls.last_opened_at, ls.last_sent_at, ls.last_sent_to, ls.reminders,
+  CASE WHEN ls.link_count = 0 THEN 'none'
+       WHEN ls.open_links > 0 AND ls.first_opened_at IS NOT NULL THEN 'opened'
+       WHEN ls.open_links > 0 THEN 'sent'
+       WHEN ls.revoked_links = ls.link_count THEN 'revoked'
+       ELSE 'expired' END AS link_state
+FROM questionnaire_responses r
+JOIN questionnaire_versions v ON v.id = r.version_id
+JOIN questionnaires q ON q.id = v.questionnaire_id
+JOIN services s ON s.id = q.service_id
+LEFT JOIN enquiries e ON e.id = r.enquiry_id
+LEFT JOIN companies co ON co.id = COALESCE(r.company_id, e.company_id)
+CROSS JOIN LATERAL (
+  SELECT count(*) AS link_count,
+         count(*) FILTER (WHERE l.revoked_at IS NULL AND l.expires_at > now()) AS open_links,
+         count(*) FILTER (WHERE l.revoked_at IS NOT NULL) AS revoked_links,
+         max(l.expires_at) FILTER (WHERE l.revoked_at IS NULL) AS expires_at,
+         min(l.first_opened_at) AS first_opened_at, max(l.last_opened_at) AS last_opened_at,
+         max(l.created_at) FILTER (WHERE l.sent_to IS NOT NULL) AS last_sent_at,
+         (array_agg(l.sent_to ORDER BY l.created_at DESC) FILTER (WHERE l.sent_to IS NOT NULL))[1] AS last_sent_to,
+         COALESCE(max(l.reminder_count), 0) AS reminders
+    FROM questionnaire_links l WHERE l.response_id = r.id
+) ls;
 
 -- Client document notes with the client's name, for Settings (081).
 CREATE VIEW v_company_document_profiles AS
 SELECT p.*, c.name AS company_name, (p.approved_at IS NOT NULL) AS approved
 FROM company_document_profiles p
 JOIN companies c ON c.id = p.company_id;
+
+-- ---------------------------------------------------------------------
+-- The sales journey (docs/specs/sales-journey): one row per sale, from
+-- its enquiry to its last paid PO stage, holding facts only. Which step a
+-- sale is on, how long it has been there and what to do next are worked
+-- out on read by lib/journey/steps.js, so no step is ever stored.
+--
+-- A sale is anchored on the first of these that exists:
+--   q-<id>   every quotation, with its enquiry and its live POs
+--   e-<id>   an enquiry nothing has been quoted for yet
+--   p-<id>   a live PO that belongs to no quotation
+-- A cancelled PO will not go ahead and a replaced one has a revision
+-- standing in for it, so neither is part of any sale.
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_sales_journey AS
+WITH live_po AS (
+  SELECT v.* FROM v_purchase_orders v
+   WHERE NOT v.cancelled AND v.replaced_by_po_number IS NULL
+),
+-- The quotation each live PO belongs to, decided once here so that a PO is
+-- never in two sales: the one it names; else the quotation on its project,
+-- the won one first, then the newest; else none, and it is a sale of its own.
+po_link AS (
+  SELECT p.*, COALESCE(qn.id, qp.id) AS link_quotation_id
+    FROM live_po p
+    LEFT JOIN quotations qn ON qn.quotation_no = p.quotation_no
+    LEFT JOIN LATERAL (
+      SELECT q.id FROM quotations q
+       WHERE p.quotation_no IS NULL AND q.project_id = p.project_id
+       ORDER BY (q.status = 'Won - PO Received') DESC, q.id DESC
+       LIMIT 1
+    ) qp ON true
+),
+-- What a PO's stages say that v_purchase_orders does not already carry.
+po_stages AS (
+  SELECT s.po_number,
+         -- Billable once the stage's trigger has happened, unless it is held.
+         COUNT(*) FILTER (WHERE s.stage_status <> 'Not Due' AND NOT s.on_hold) AS billable_stages,
+         COALESCE(SUM(s.due_now_amount) FILTER (WHERE s.stage_status = 'Overdue'), 0) AS overdue_amount,
+         MAX(s.payment_received_date) AS last_paid_on,
+         MIN(s.invoice_due_date) FILTER (WHERE s.stage_status <> 'Paid') AS next_stage_due
+    FROM v_payment_stages s
+   GROUP BY s.po_number
+),
+pos AS (
+  SELECT CASE WHEN l.link_quotation_id IS NOT NULL THEN 'q-' || l.link_quotation_id ELSE 'p-' || l.id END AS journey_key,
+         COUNT(*)::int AS po_count,
+         array_agg(l.po_number ORDER BY l.po_date NULLS LAST, l.id) AS po_numbers,
+         (array_agg(l.id ORDER BY l.po_date NULLS LAST, l.id))[1] AS first_po_id,
+         (array_agg(l.po_number ORDER BY l.po_date NULLS LAST, l.id))[1] AS first_po_number,
+         (array_agg(l.project_id ORDER BY l.po_date NULLS LAST, l.id))[1] AS first_project_id,
+         MIN(l.po_date) AS first_po_date,
+         MIN(l.created_at) AS first_po_created_at,
+         -- One currency or no total, as v_projects does: rupees added to
+         -- euros are not a value, and calling the sum either would be wrong.
+         CASE WHEN COUNT(DISTINCT l.currency) = 1 THEN SUM(l.po_value) END AS po_value_total,
+         CASE WHEN COUNT(DISTINCT l.currency) = 1 THEN MIN(l.currency) END AS po_currency,
+         COUNT(*) FILTER (WHERE l.stage_count = 0)::int AS pos_without_stages,
+         SUM(l.stage_count)::int AS stage_count,
+         SUM(l.total_invoiced) AS invoiced_total,
+         SUM(l.total_received) AS received_total,
+         SUM(l.stages_to_invoice)::int AS stages_to_invoice,
+         SUM(l.overdue_stages)::int AS overdue_stages,
+         COALESCE(SUM(s.overdue_amount), 0) AS overdue_amount,
+         COALESCE(SUM(s.billable_stages), 0)::int AS billable_stages,
+         bool_and(l.payment_status = 'Fully Paid') AS fully_paid,
+         MAX(s.last_paid_on) AS last_paid_on,
+         MIN(s.next_stage_due) AS next_stage_due,
+         bool_and(l.actual_delivery_date IS NOT NULL) AS delivered,
+         -- Whoever owns the project a PO sits under reaches the sale (spec D7).
+         COALESCE(array_agg(DISTINCT pr.owner_user_id) FILTER (WHERE pr.owner_user_id IS NOT NULL), '{}') AS project_owner_ids
+    FROM po_link l
+    JOIN projects pr ON pr.project_id = l.project_id
+    LEFT JOIN po_stages s ON s.po_number = l.po_number
+   GROUP BY 1
+),
+anchors AS (
+  SELECT 'q-' || q.id AS journey_key, 'quotation' AS anchor, q.id AS quotation_id, e.id AS enquiry_id
+    FROM quotations q
+    LEFT JOIN LATERAL (
+      SELECT x.id FROM enquiries x
+       WHERE x.quotation_no = q.quotation_no
+       ORDER BY x.enquiry_date NULLS LAST, x.id
+       LIMIT 1
+    ) e ON true
+  UNION ALL
+  SELECT 'e-' || e.id, 'enquiry', NULL, e.id FROM enquiries e WHERE e.quotation_no IS NULL
+  UNION ALL
+  SELECT 'p-' || l.id, 'po', NULL, NULL FROM po_link l WHERE l.link_quotation_id IS NULL
+)
+SELECT
+  a.journey_key,
+  a.anchor,
+  COALESCE(q.client_name, e.client_name, pr.client_name)            AS client_name,
+  COALESCE(q.company_id, e.company_id, pr.company_id)               AS company_id,
+  COALESCE(q.sales_person, e.sales_person, pr.sales_person)         AS sales_person,
+  COALESCE(q.service_quoted, e.service, pr.primary_service)         AS service,
+  e.owner_user_id                                                   AS enquiry_owner_id,
+  q.owner_user_id                                                   AS quotation_owner_id,
+  -- Whoever owns a project the sale sits on (spec D7): the project of each
+  -- live PO, and the sale's own project, which a won quotation reaches
+  -- before its first PO is registered.
+  ARRAY(SELECT DISTINCT o FROM unnest(COALESCE(p.project_owner_ids, '{}') || pr.owner_user_id) AS o
+         WHERE o IS NOT NULL ORDER BY o)                            AS project_owner_ids,
+  e.id                                                              AS enquiry_id,
+  e.enquiry_no,
+  -- The enquiry's own owner, for its step; sales_person above is the sale's.
+  e.sales_person                                                    AS enquiry_sales_person,
+  e.enquiry_date,
+  e.created_at                                                      AS enquiry_created_at,
+  e.status                                                          AS enquiry_status,
+  e.first_responded_at                                              AS enquiry_first_responded_at,
+  e.last_contacted_at                                               AS enquiry_last_contacted_at,
+  e.estimated_value                                                 AS enquiry_estimated_value,
+  e.currency                                                        AS enquiry_currency,
+  COALESCE(ls.name, e.source)                                       AS enquiry_source,
+  ur.name                                                           AS enquiry_unqualified_reason,
+  q.id                                                              AS quotation_id,
+  q.quotation_no,
+  q.quotation_date,
+  q.created_at                                                      AS quotation_created_at,
+  q.status                                                          AS quotation_status,
+  -- The priced total once it has lines; until then the figure typed in.
+  CASE WHEN q.line_count > 0 THEN COALESCE(q.total, q.quotation_value) ELSE q.quotation_value END AS quotation_value,
+  q.currency                                                        AS quotation_currency,
+  q.line_count,
+  q.price_needed_count,
+  q.sent_at,
+  q.accepted_at,
+  q.closed_at,
+  q.stage,
+  q.stage_type,
+  q.approval_status,
+  q.expired,
+  q.lost_reason,
+  q.expected_close_date,
+  -- The quotation's project, or the project of the sale's first PO.
+  COALESCE(q.project_id, p.first_project_id)                        AS project_id,
+  COALESCE(p.po_count, 0)                                           AS po_count,
+  COALESCE(p.po_numbers, '{}')                                      AS po_numbers,
+  p.first_po_id,
+  p.first_po_number,
+  p.first_po_date,
+  p.first_po_created_at,
+  p.po_value_total,
+  p.po_currency,
+  COALESCE(p.pos_without_stages, 0)                                 AS pos_without_stages,
+  COALESCE(p.stage_count, 0)                                        AS stage_count,
+  COALESCE(p.invoiced_total, 0)                                     AS invoiced_total,
+  COALESCE(p.received_total, 0)                                     AS received_total,
+  COALESCE(p.stages_to_invoice, 0)                                  AS stages_to_invoice,
+  COALESCE(p.overdue_stages, 0)                                     AS overdue_stages,
+  COALESCE(p.overdue_amount, 0)                                     AS overdue_amount,
+  COALESCE(p.billable_stages, 0)                                    AS billable_stages,
+  COALESCE(p.fully_paid, false)                                     AS fully_paid,
+  p.last_paid_on,
+  p.next_stage_due,
+  -- When the sale began is worked out in lib/journey/steps.js (startedOn)
+  -- from the dates above: a timestamp's day is the business day it fell on,
+  -- which a cast here would read in the database's time zone instead.
+  COALESCE(p.delivered, false)                                      AS delivered
+FROM anchors a
+LEFT JOIN v_quotations q ON q.id = a.quotation_id
+LEFT JOIN enquiries e ON e.id = a.enquiry_id
+LEFT JOIN lead_sources ls ON ls.id = e.source_id
+LEFT JOIN lost_reasons ur ON ur.id = e.unqualified_reason_id
+LEFT JOIN pos p ON p.journey_key = a.journey_key
+LEFT JOIN projects pr ON pr.project_id = COALESCE(q.project_id, p.first_project_id);
 
 COMMIT;

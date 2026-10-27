@@ -92,6 +92,8 @@ export function AuthProvider({ children }) {
       // Shared mode has one account with full access, so it is an admin.
       // Database mode asks the role the server just re-read.
       isAdmin: state.status === 'in' && (mode === 'shared' || state.user?.role === 'admin'),
+      // The travel desk (#196): trips, vendor invoices and the travel import only.
+      isHr: state.status === 'in' && mode !== 'shared' && state.user?.role === 'hr',
       signIn,
       signOut,
     }),

@@ -86,6 +86,12 @@ export function ownershipScope(user) {
   if (!user) throw new ApiError(401, 'Your session has ended — sign in again');
   if (isUnrestricted(user)) return { unrestricted: true, ownerId: null };
 
+  // The HR role (#196): the travel desk. Owns no sales records; `hr` lets the
+  // travel-only predicates below (hrClause, documentClause) narrow it.
+  if (user.role === 'hr' && user.mode === 'database' && Number.isSafeInteger(user.id) && user.id > 0) {
+    return { unrestricted: false, ownerId: user.id, hr: true };
+  }
+
   // A database sales user. No id means the session is not what it claims
   // to be; refusing beats falling through to "see everything".
   if (user.mode !== 'database' || !Number.isSafeInteger(user.id) || user.id <= 0) {
@@ -195,8 +201,27 @@ export function purchaseOrderClause(scope, params, { alias = 'po' } = {}) {
  * to a record it has loaded. So this costs no working flow, and it closes
  * the gap without a schema change.
  */
+/**
+ * The documents the HR role may open (#196): the files on trips and on
+ * travel vendor invoices. Nothing on the sales side, whoever owns it.
+ */
+function travelDocumentClause(alias) {
+  return `(
+       EXISTS (SELECT 1 FROM attachments tat
+                WHERE tat.document_id = ${alias}.id AND tat.entity IN ('travel_log','travel_vendor_invoice'))
+    OR EXISTS (SELECT 1 FROM travel_vendor_invoices tvi WHERE tvi.document_id = ${alias}.id)
+    OR EXISTS (SELECT 1 FROM travel_vendor_credit_notes tcn WHERE tcn.document_id = ${alias}.id)
+    -- The bank advice behind a payment to the agency (#214). Without this
+    -- clause HR uploads the proof and is then refused its own file: the
+    -- document hangs off the payment row, which none of the clauses above
+    -- reach.
+    OR EXISTS (SELECT 1 FROM travel_vendor_payments tvp WHERE tvp.document_id = ${alias}.id))`;
+}
+
 export function documentClause(scope, params, { alias = 'd' } = {}) {
   if (scope.unrestricted) return '';
+  // The HR role opens the travel desk's files only (#196).
+  if (scope.hr) return travelDocumentClause(alias);
   params.push(scope.ownerId);
   const n = params.length;
   return `(
@@ -223,6 +248,19 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
                WHERE dpc.document_id = ${alias}.id AND cp.${OWNER_COLUMN} = $${n})
     OR EXISTS (SELECT 1 FROM attachments dat
                WHERE dat.document_id = ${alias}.id AND ${entityCase('dat', n)})
+    -- A travel agency's invoice or credit note PDF: open as vendor invoices are (#196).
+    OR EXISTS (SELECT 1 FROM travel_vendor_invoices dtv WHERE dtv.document_id = ${alias}.id)
+    OR EXISTS (SELECT 1 FROM travel_vendor_credit_notes dtc WHERE dtc.document_id = ${alias}.id)
+    -- A client's remittance advice from the portal (#198): as the PO or invoices it is about.
+    OR EXISTS (SELECT 1 FROM portal_client_actions dca
+                JOIN purchase_orders apo ON apo.po_number = dca.po_number
+                  OR apo.po_number IN (SELECT ast.po_number FROM portal_client_action_stages acs
+                                         JOIN payment_stages ast ON ast.id = acs.stage_id WHERE acs.action_id = dca.id)
+               WHERE dca.document_id = ${alias}.id
+                 AND (EXISTS (SELECT 1 FROM quotations pq4
+                               WHERE pq4.quotation_no = apo.quotation_no AND pq4.${OWNER_COLUMN} = $${n})
+                   OR EXISTS (SELECT 1 FROM projects pp4
+                               WHERE pp4.project_id = apo.project_id AND pp4.${OWNER_COLUMN} = $${n})))
     OR EXISTS (SELECT 1 FROM deliverables ddl
                WHERE ddl.document_id = ${alias}.id
                  AND (EXISTS (SELECT 1 FROM projects dp
@@ -233,6 +271,10 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
                                                WHERE pq3.quotation_no = dpo2.quotation_no AND pq3.${OWNER_COLUMN} = $${n})
                                    OR EXISTS (SELECT 1 FROM projects pp3
                                                WHERE pp3.project_id = dpo2.project_id AND pp3.${OWNER_COLUMN} = $${n})))))
+    -- A file a client uploaded into a questionnaire (#208): the enquiry's owner's.
+    OR EXISTS (SELECT 1 FROM questionnaire_response_files dqf JOIN questionnaire_responses dqr ON dqr.id = dqf.response_id
+               WHERE dqf.document_id = ${alias}.id
+                 AND COALESCE((SELECT dqe.${OWNER_COLUMN} FROM enquiries dqe WHERE dqe.id = dqr.enquiry_id), dqr.requested_by_user_id) = $${n})
   )`;
 }
 
@@ -297,11 +339,19 @@ function entityCase(alias, n, { sharedAs = 'true' } = {}) {
               JOIN purchase_orders epo ON epo.po_number = x.po_number
              WHERE ${match} AND ${poOwned('epo')})`;
   });
+  // The travel desk's records (#196): a trip and a travel agency's invoice
+  // are open to everybody signed in, as /api/travel-logs and
+  // /api/vendor-invoices are, so the files on them are too. Not in
+  // ENTITY_RECORDS: they carry files only, no timeline, notes or tasks.
+  for (const entity of TRAVEL_FILE_ENTITIES) branches.push(`WHEN '${entity}' THEN ${sharedAs}`);
   return `CASE ${alias}.entity
   ${branches.join('\n  ')}
   ELSE false
 END`;
 }
+
+/** The travel records files are attached to (attachments.entity, #196). */
+export const TRAVEL_FILE_ENTITIES = ['travel_log', 'travel_vendor_invoice'];
 
 export function parentClause(scope, params, { kind, alias }) {
   if (scope.unrestricted) return '';
@@ -358,6 +408,13 @@ export function parentClause(scope, params, { kind, alias }) {
  * '' when the resource is not ownership-scoped, or the caller is an admin.
  */
 export function resourceClause(def, scope, params, { alias = '' } = {}) {
+  // The HR role sees only a resource's travel rows (#196), on top of its ownership.
+  const hr = scope.hr && def.hrClause ? def.hrClause(alias ? `"${alias}".` : '') : '';
+  const own = ownershipPredicate(def, scope, params, alias);
+  return [hr, own].filter(Boolean).join(' AND ');
+}
+
+function ownershipPredicate(def, scope, params, alias) {
   if (def.ownerScoped) return ownerClause(scope, params, { alias });
   if (def.ownerScopedBy) {
     // A parent-derived clause has to name columns on the relation the

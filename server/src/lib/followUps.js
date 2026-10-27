@@ -15,7 +15,7 @@ import { pool } from '../db.js';
 import { authConfig } from '../auth/config.js';
 import { addWorkingDays, businessToday, isWorkingDay, workingDaysBetween } from './businessDate.ts';
 import { followUpEscalatedNotice, followUpEscalation, followUpReminder } from './emailTemplates.js';
-import { sendMail } from './mail.js';
+import { sendMail, uniqueAddresses } from './mail.js';
 import { notify } from './notify.js';
 import { emit } from './webhooks.js';
 import { raiseAlert } from './ops/alerts.js';
@@ -66,12 +66,8 @@ export function readSettings(raw = {}) {
 /** Comma- or semicolon-separated addresses, trimmed, without blanks. */
 export const splitAddresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter(Boolean);
 
-/** Addresses de-duplicated without regard to case, first spelling kept. */
-export function uniqueAddresses(list) {
-  const seen = new Map();
-  for (const a of list) if (a && !seen.has(a.toLowerCase())) seen.set(a.toLowerCase(), a);
-  return [...seen.values()];
-}
+/** Addresses de-duplicated without regard to case, first spelling kept; shared with every sender (lib/mail.js). */
+export { uniqueAddresses };
 
 export const keyOf = (r) => `${r.entity}:${r.entity_id}`;
 

@@ -12,7 +12,9 @@ import Mailboxes from './Mailboxes.jsx';
 import Webhooks from './Webhooks.jsx';
 import Templates from './Templates.jsx';
 import Emails from './Emails.jsx';
+import ClientEmails from './ClientEmails.jsx';
 import BulkImport from './BulkImport.jsx';
+import TravelImport from './TravelImport.jsx';
 import ReportCategories from './ReportCategories.jsx';
 import DocumentProfiles from './DocumentProfiles.jsx';
 
@@ -54,7 +56,7 @@ export function SettingsPane({ title, description, actions, children }) {
           being 1280 did not help. */}
       <div className="flex flex-col gap-4 @3xl:flex-row @3xl:flex-wrap @3xl:items-start">
         <div className="min-w-0 flex-1">
-          <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">{title}</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">{title}</h1>
           {description && (
             <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">{description}</p>
           )}
@@ -85,7 +87,7 @@ const GROUPS = [
     label: 'Lists',
     items: [
       ...Object.entries(CATALOGUES).map(([key, c]) => ({
-        to: key, label: c.title, element: <Catalogue key={key} {...c} />,
+        to: key, label: c.title, element: <Catalogue key={key} {...c} />, hr: c.hr,
       })),
       { to: 'templates', label: 'Templates', element: <Templates />, adminOnly: true },
       { to: 'reports', label: 'Report categories', element: <ReportCategories />, adminOnly: true },
@@ -114,18 +116,21 @@ const GROUPS = [
     label: 'Data',
     items: [
       { to: 'import', label: 'Import', element: <BulkImport />, adminOnly: true },
+      { to: 'import-travel', label: 'Import travel', element: <TravelImport />, adminOnly: true, hr: true },
       { to: 'emails', label: 'Emails & jobs', element: <Emails />, adminOnly: true },
+      { to: 'client-emails', label: 'Client emails', element: <ClientEmails /> },
     ],
   },
 ];
 
 export default function SettingsArea() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isHr } = useAuth();
   const groups = GROUPS
     .map((group) => ({
       ...group,
       items: group.items
-        .filter((item) => isAdmin || !item.adminOnly)
+        // The travel desk (#196) sees the travel lists and the travel import only.
+        .filter((item) => (isHr ? item.hr : isAdmin || !item.adminOnly))
         .map((item) => (!isAdmin && item.salesLabel ? { ...item, label: item.salesLabel } : item)),
     }))
     .filter((group) => group.items.length > 0);
@@ -140,7 +145,7 @@ export default function SettingsArea() {
    * the first group is a fact about the menu, not a decision about where
    * somebody should start.
    */
-  const DEFAULT_PANE = 'rates';
+  const DEFAULT_PANE = isHr ? 'travel-vendors' : 'rates';
   const first = groups.some((group) => group.items.some((item) => item.to === DEFAULT_PANE))
     ? DEFAULT_PANE
     : groups[0]?.items[0]?.to ?? DEFAULT_PANE;

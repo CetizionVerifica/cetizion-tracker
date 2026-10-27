@@ -9,6 +9,7 @@ import { businessToday } from './businessDate.ts';
 import { financeDigest, paymentReminder } from './emailTemplates.js';
 import { sendMail } from './mail.js';
 import { UNTOUCHED_HISTORY_INVOICE } from './invoices.js';
+import { portalAddress, settingOn } from './portalNotices.js';
 
 const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86_400_000);
 
@@ -27,7 +28,10 @@ const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(
  *    levelDays (3, 14, 30 by default); after the final one, every
  *    intervalDays; a level already sent is not repeated;
  *  - a client with no billing email, or an opted-out contact, is
- *    reported but not emailed.
+ *    reported but not emailed;
+ *  - `portal` says the recipient can sign in to the client portal (its
+ *    company has the portal and its Invoices on, and they are allowed in),
+ *    so the reminder can carry its address (#198 phase 3).
  */
 export function planReminders(stages, { today, intervalDays = 7, levelDays = [3, 14, 30] } = {}) {
   const groups = new Map();
@@ -59,7 +63,7 @@ export function planReminders(stages, { today, intervalDays = 7, levelDays = [3,
     if (!s.contact_email) { skipped.push({ id: s.id, reason: `${s.client_name}: no billing contact with an email` }); continue; }
     if (s.opt_out) { skipped.push({ id: s.id, reason: `${s.contact_email} opted out of automatic email` }); continue; }
     const key = s.company_id ?? s.client_name;
-    if (!groups.has(key)) groups.set(key, { company: s.company_name || s.client_name, companyId: s.company_id, to: s.contact_email, contactName: s.contact_name, stages: [], level: 0 });
+    if (!groups.has(key)) groups.set(key, { company: s.company_name || s.client_name, companyId: s.company_id, to: s.contact_email, contactName: s.contact_name, portal: Boolean(s.portal_enabled && s.portal_access && (s.portal_sections || []).includes('invoices')), stages: [], level: 0 });
     const g = groups.get(key);
     g.stages.push({ ...s, next_level: level });
     g.level = Math.max(g.level, Math.min(level, levelDays.length));
@@ -68,12 +72,13 @@ export function planReminders(stages, { today, intervalDays = 7, levelDays = [3,
 }
 
 const STAGE_ROWS = `
-  SELECT ps.*, pr.company_id, c.name AS company_name, ct.name AS contact_name, ct.email AS contact_email, ct.opt_out_reminders AS opt_out
+  SELECT ps.*, pr.company_id, c.name AS company_name, ct.name AS contact_name, ct.email AS contact_email, ct.opt_out_reminders AS opt_out,
+         c.portal_enabled, c.portal_sections, ct.portal_access
     FROM v_payment_stages ps
     JOIN projects pr ON pr.project_id = ps.project_id
     LEFT JOIN companies c ON c.id = pr.company_id
     LEFT JOIN LATERAL (
-      SELECT name, email, opt_out_reminders FROM contacts
+      SELECT name, email, opt_out_reminders, portal_access FROM contacts
        WHERE company_id = pr.company_id AND email IS NOT NULL
        ORDER BY is_billing DESC, id LIMIT 1
     ) ct ON true`;
@@ -99,9 +104,11 @@ export async function runPaymentReminders({ db = { query }, today = businessToda
   const { rows } = await db.query(`${STAGE_ROWS} WHERE ps.stage_status = 'Overdue' AND NOT ${UNTOUCHED_HISTORY_INVOICE('ps')}`);
   const financeEmail = (await setting(db, 'finance_email', '')) || null;
   const plan = planReminders(rows, { today, intervalDays, levelDays: levelDays.length ? levelDays : [3, 14, 30] });
+  // The portal's address, for a recipient who can sign in to it (#198 phase 3).
+  const portalUrl = (await settingOn(db, 'portal_link_in_reminders')) ? await portalAddress(db) : null;
   const sent = [];
   for (const r of plan.reminders) {
-    const email = paymentReminder({ company: r.company, contactName: r.contactName, stages: r.stages, financeEmail, level: r.level, finalLevel: levelDays.length || 3 });
+    const email = paymentReminder({ company: r.company, contactName: r.contactName, stages: r.stages, financeEmail, level: r.level, finalLevel: levelDays.length || 3, portalUrl: r.portal ? portalUrl : null });
     const log = await send({ ...email, to: r.to, cc: financeEmail, template: 'payment_reminder', entity: 'company', entityId: r.companyId, sentBy: startedBy }, db);
     // Only a mail that left the server counts as a chase. A logged, suppressed or
     // failed one leaves the stage due, so it goes out the first day delivery works —

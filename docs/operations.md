@@ -100,3 +100,44 @@ An alert goes to the notification centre, to the `alert_email` setting (or
 or a signed-in session. It has request rate and duration by route and
 status, the database pool, job runs by result, PDF build time, alerts, and
 failed sign-ins, plus Node's own process metrics.
+
+## Attachment converter
+
+PowerPoint and older Office attachments (`.pptx`, `.ppt`, `.pps`, `.doc`,
+`.rtf`, `.odt`, `.odp`) open in the Inbox viewer as PDFs. The API does not
+convert them itself: a [Gotenberg](https://gotenberg.dev) container does,
+with LibreOffice inside (docs/inbox-attachments-plan.md, step 3). Until it
+is set up, those files are listed with "open it in Outlook" and nothing
+else changes.
+
+Set it up once in Dokploy, as a Docker Compose service next to the tracker:
+
+```yaml
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    command:
+      - gotenberg
+      - --chromium-disable-routes=true   # LibreOffice only; no web page rendering
+      - --webhook-disable=true
+      - --api-timeout=60s
+      - --libreoffice-auto-start=true
+    networks: [dokploy-network]
+networks:
+  dokploy-network:
+    external: true
+```
+
+- **No domain and no published port.** Only the tracker reaches it, as
+  `http://<service name>:3000` on `dokploy-network`. Set that address as
+  `DOC_CONVERTER_URL` on the tracker app and redeploy it.
+- **No way out.** The files it reads come from outside the company, so it
+  should not reach the internet. Where the host firewall allows it, block
+  the container's outbound traffic; the tracker only ever calls it, never
+  the other way round.
+- **Nothing is stored.** Each file is sent, converted and dropped; the PDF
+  goes to the person viewing it and is not kept by the tracker either.
+- It needs about 1 GB of memory under load. A conversion that takes over a
+  minute, or fails, shows "could not be converted; open it in Outlook" and
+  is written to the API log as `[mail] an attachment could not be converted`.

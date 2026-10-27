@@ -53,6 +53,11 @@ export const AUTH_MECHANISMS = {
     proof: 'A 40-60 character random token from the emailed link, SHA-256 hashed and matched against quotation_acceptances.token_hash, with expiry, revision and status checked on every use.',
     description: 'A client opening their own quotation (#53). The token is the credential and it is bound to one quotation.',
   },
+  'questionnaire-link-token': {
+    authenticates: true,
+    proof: 'A 40-60 character random token from the emailed or copied link, SHA-256 hashed and matched against questionnaire_links.token_hash, with expiry, revoke and the status of the response checked on every use.',
+    description: 'A client filling in a service questionnaire (#208). The token is the credential and it is bound to one response: its questions, its own answers and its own files.',
+  },
   'portal-link-token': {
     authenticates: true,
     proof: 'A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session.',
@@ -109,6 +114,8 @@ export const RESTRICTIONS = {
   'protected-fields': 'Some columns may not be written here; they move only through their own authorised route.',
   'api-token-scope': 'Limited to what the presented API token\'s role and person allow, and to reads unless the token may write.',
   'settings-override': 'Admin-only unless a named setting opens it to everybody.',
+  'hr-travel-only': 'For the HR role, limited to the rows on trips and travel vendor invoices.',
+  'travel-desk-only': 'The handler allows the administrator and the HR role only: paying a travel agency is the travel desk\'s work, and the three access levels cannot say "admin and HR but not sales" on their own.',
 };
 
 const mustBeAdmin = 'admin';
@@ -152,6 +159,10 @@ export const routes = [
   { method: 'GET', path: '/api/auth/providers', access: mustBeAdmin, why: 'Which sign-in methods are configured, and how. It reports the provider set-up of the deployment, not the caller\'s own identities — those are on GET /api/auth/account. Carries its own requireAuth and requireAdmin because it is mounted before the /api gate.' },
 
   // ------------------------------------------------ public quotation link
+  { method: 'GET', path: '/api/public/questionnaire/:token', access: 'public', mechanism: 'questionnaire-link-token', openBecause: 'A client opens the questionnaire sent to them (#208) without an account; only the questions, answers and file names of that response go out.', restrictions: ['parent-owner'] },
+  { method: 'PUT', path: '/api/public/questionnaire/:token/answers', access: 'public', mechanism: 'questionnaire-link-token', openBecause: 'The answers of the client, saved as they go; checked against the questions, refused once submitted.', restrictions: ['parent-owner'] },
+  { method: 'POST', path: '/api/public/questionnaire/:token/files', access: 'public', mechanism: 'questionnaire-link-token', openBecause: 'A file for a file question: PDF, image, Word or Excel, within the document size cap, held on that response only.', restrictions: ['parent-owner'] },
+  { method: 'POST', path: '/api/public/questionnaire/:token/submit', access: 'public', mechanism: 'questionnaire-link-token', openBecause: 'The client submits; every required answer checked, then read-only and the owner of the enquiry told.', restrictions: ['parent-owner'] },
   { method: 'GET', path: '/api/public/accept/:token', access: 'public', mechanism: 'acceptance-link-token', openBecause: 'A client opens the quotation addressed to them (#53) without an account.', restrictions: ['parent-owner'] },
   { method: 'GET', path: '/api/public/accept/:token/pdf', access: 'public', mechanism: 'acceptance-link-token', openBecause: 'The same quotation as a PDF.', restrictions: ['parent-owner'] },
   { method: 'POST', path: '/api/public/accept/:token/accept', access: 'public', mechanism: 'acceptance-link-token', openBecause: 'The client accepts the quotation the token is bound to.', restrictions: ['parent-owner'] },
@@ -175,8 +186,14 @@ export const routes = [
   { method: 'GET', path: '/api/portal/certificates', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own certificates.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/files/document/:id', access: 'public', mechanism: 'portal-session', openBecause: 'A document file, checked against the session\'s company before it is served.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/files/quotation/:no', access: 'public', mechanism: 'portal-session', openBecause: 'A quotation PDF, checked against the session\'s company before it is served.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'GET', path: '/api/portal/files/invoice/:id', access: 'public', mechanism: 'portal-session', openBecause: 'An invoice\'s PDF, from the Invoices section; the invoice is checked against the session\'s company before it is served (#198).', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'GET', path: '/api/portal/files/po/:no', access: 'public', mechanism: 'portal-session', openBecause: 'A live purchase order\'s file, from Projects & orders; checked against the session\'s company before it is served (#198).', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/messages', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own messages.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'POST', path: '/api/portal/messages', access: 'public', mechanism: 'portal-session', openBecause: 'The client writes to us.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'GET', path: '/api/portal/actions', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own confirmations, queries and payment advice, and where each stands (#198).', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'POST', path: '/api/portal/actions', access: 'public', mechanism: 'portal-session', openBecause: 'The client confirms an invoice, raises a query, or tells us they paid (#198). A claim only: it writes no payment; every invoice and PO named is checked against the session\'s company first.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'POST', path: '/api/portal/documents', access: 'public', mechanism: 'portal-session', openBecause: 'The client uploads a file onto one of their own projects or POs (#198), checked against the session\'s company; PDF, image, Word or Excel only, within the document size limit.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'DELETE', path: '/api/portal/documents/:id', access: 'public', mechanism: 'portal-session', openBecause: 'The client takes back their own upload, until our team has seen it (#198).', restrictions: ['record-owner', 'portal-section'] },
 
   // ------------------------------------------------------------- MCP
   { method: 'POST', path: '/api/mcp', access: 'public', mechanism: 'api-token', openBecause: 'MCP clients authenticate with an API token instead of a session (#50). No token, no answer.', restrictions: ['api-token-scope'] },
@@ -218,7 +235,16 @@ export const routes = [
   { method: 'GET', path: '/api/mis-reports/:kind/preview.pdf', access: mustBeAdmin, why: 'The same report as a PDF, built over the whole book.' },
   { method: 'GET', path: '/api/mis-reports/runs', access: mustBeAdmin, why: 'Every report sent to management, with its recipients.' },
   { method: 'GET', path: '/api/mis-reports/runs/:id/pdf', access: mustBeAdmin, why: 'The PDF that went to management, over the whole book.' },
-  { method: 'POST', path: '/api/mis-reports/:kind/send', access: mustBeAdmin, why: 'Emails management a report now, from the sales mailbox; not a preview.' },
+  { method: 'POST', path: '/api/mis-reports/:kind/send', access: mustBeAdmin, why: 'Emails management a report now, from the chosen sender; not a preview.' },
+  { method: 'GET', path: '/api/mis-reports/sender', access: mustBeAdmin, why: 'Which mailbox and address the management reports go from, and why that mailbox cannot send; part of the reports\' settings.' },
+  { method: 'GET', path: '/api/mis-reports/personal/people', access: mustBeAdmin, why: 'Who a personal daily MIS is for and the state of each one\'s mailbox; part of the reports\' settings.' },
+  { method: 'GET', path: '/api/mis-reports/personal/:userId/preview', access: mustBeAdmin, why: 'One person\'s day as the personal MIS sees it, and the AI\'s report on it; a manager\'s view of someone else\'s work. Their mail text stays hidden.' },
+  { method: 'GET', path: '/api/mis-reports/personal/:userId/preview.pdf', access: mustBeAdmin, why: 'One person\'s daily MIS as it would be sent to management, written now by the AI; a manager\'s view of someone else\'s work.' },
+  { method: 'POST', path: '/api/mis-reports/personal/:userId/send', access: mustBeAdmin, why: 'Emails management one person\'s daily MIS now, from their mailbox; only an admin decides when a report about someone goes.' },
+  { method: 'GET', path: '/api/mis-reports/mine', access: signedIn, restrictions: ['self-only'] },
+  { method: 'GET', path: '/api/mis-reports/mine/:id/pdf', access: signedIn, restrictions: ['self-only'] },
+  { method: 'POST', path: '/api/mis-reports/mine/notice', access: signedIn, restrictions: ['self-only'] },
+  { method: 'POST', path: '/api/mis-reports/sender/test', access: mustBeAdmin, why: 'Sends real mail from the reports\' sender (to the caller only); trying the company\'s sending path is an admin\'s act.' },
   { method: 'GET', path: '/api/reports/categories', access: mustBeAdmin, why: 'Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller\'s own records.' },
 
   // --------------------------------------------------------- saved views
@@ -255,6 +281,18 @@ export const routes = [
   { method: 'PATCH', path: '/api/import/items/:id', access: mustBeAdmin, why: 'The whole import router is administrator-only: a commit writes records in bulk, under somebody else\'s name, across every table the sheet touches.' },
   { method: 'POST', path: '/api/import/batches/:id/duplicates', access: mustBeAdmin, why: 'The whole import router is administrator-only: a commit writes records in bulk, under somebody else\'s name, across every table the sheet touches.' },
   { method: 'POST', path: '/api/import/batches/:id/commit', access: mustBeAdmin, why: 'A commit writes every row of the batch into the live tables.' },
+  { method: 'GET', path: '/api/import/travel/template.xlsx', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'GET', path: '/api/import/travel', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'GET', path: '/api/import/travel/:id', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'PATCH', path: '/api/import/travel/:id', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'DELETE', path: '/api/import/travel/:id', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'PATCH', path: '/api/import/travel/:id/items/:itemId', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/items/:itemId/split', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/duplicates', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/commit', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/documents', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/documents', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
 
   // ------------------------------------------------------------ documents
   { method: 'POST', path: '/api/documents', access: signedIn },
@@ -274,14 +312,22 @@ export const routes = [
   { method: 'GET', path: '/api/companies/:id/full', access: signedIn },
   { method: 'POST', path: '/api/companies/:id/merge', access: mustBeAdmin, why: 'A merge folds every record of one client into another and deletes the loser. It cannot be undone from the UI.' },
 
+  // --------------------------------------------------------------- owners
+  { method: 'GET', path: '/api/owners/duplicates', access: mustBeAdmin, why: 'Counts the records behind every Owner spelling across the whole book, not only the caller\'s own.' },
+  { method: 'POST', path: '/api/owners/merge', access: mustBeAdmin, why: 'Rewrites the Owner on every record carrying the merged spellings and fills in their owner. It cannot be undone from the UI.' },
+
   // --------------------------------------------------------------- emails
-  { method: 'GET', path: '/api/emails', access: signedIn },
-  { method: 'GET', path: '/api/emails/:id', access: signedIn },
+  { method: 'GET', path: '/api/emails', access: signedIn, restrictions: ['record-owner'], note: 'A sales user sees only the client emails on records they own; an admin sees every email.' },
+  { method: 'GET', path: '/api/emails/:id', access: signedIn, restrictions: ['record-owner'], note: 'An email that is not a client email on one of the caller\'s records is a 404 for a sales user.' },
   { method: 'POST', path: '/api/emails/test', access: mustBeAdmin, why: 'It sends real mail to an address the caller names — an effect outside the application.' },
+  { method: 'GET', path: '/api/client-emails', access: signedIn, restrictions: ['record-owner'], note: 'An admin sees every client email and whose record it is on; a sales user only the client emails on records they own. HR is refused.' },
+  { method: 'PUT', path: '/api/client-emails', access: mustBeAdmin, why: 'Holding or releasing client email decides whether clients hear from the company at all.' },
 
   // ------------------------------------------------------------- pipeline
   { method: 'GET', path: '/api/pipeline', access: signedIn },
   { method: 'POST', path: '/api/pipeline/:key/move', access: signedIn },
+  { method: 'GET', path: '/api/journey', access: signedIn, restrictions: ['record-owner'], note: 'Every sale from enquiry to paid PO, by step (docs/specs/sales-journey). A sales user sees a sale when they own its enquiry, its quotation, or the project of one of its POs, and the column totals and funnel are counted from those sales only. Read only.' },
+  { method: 'GET', path: '/api/journey/of', access: signedIn, restrictions: ['record-owner'], note: 'The one sale holding an enquiry, quotation, PO or project, for its page\'s rail. A sale the caller cannot reach answers 404, the same as a record no sale holds, so asking does not confirm it exists.' },
 
   // ------------------------------------------------------------- timeline
   { method: 'GET', path: '/api/timeline', access: signedIn, restrictions: ['record-owner', 'mailbox-owner'], note: 'The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own.' },
@@ -363,7 +409,7 @@ export const routes = [
   { method: 'GET', path: '/api/mail/mailboxes', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'The caller\'s own mailboxes and the shared ones they are named on, with their folders; an admin sees every mailbox\'s folder list.' },
   { method: 'GET', path: '/api/mail/folders/:accountId/:folderId/messages', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'GET', path: '/api/mail/messages/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'What is stored, under the mailbox\'s visibility. The owner of a personal mailbox that stores less reads the body live from the provider; nothing is stored.' },
-  { method: 'GET', path: '/api/mail/messages/:id/attachments/:attId', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'Streamed from the provider with nosniff and a 25 MB cap; from a mailbox that stores metadata or subjects only, the owner alone.' },
+  { method: 'GET', path: '/api/mail/messages/:id/attachments/:attId/view', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'For the Inbox\'s viewer only (X-Tracker-View), never a download: a PDF or picture streamed inline from the provider with nosniff and a 25 MB cap, a sheet or text file as data. From a personal mailbox that stores metadata or subjects only, the owner alone; a shared mailbox\'s attachments to whoever reads its mail. Each view is logged.' },
   { method: 'GET', path: '/api/mail/messages/:id/inline/:contentId', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'A cid: image of the message, images only, under the same rule as attachments.' },
 
   // ---------------------------------------------------------------- inbox
@@ -419,6 +465,31 @@ export const routes = [
   { method: 'PATCH', path: '/api/portal-admin/companies/:id', access: mustBeAdmin, why: 'Switching the portal on and choosing its sections.' },
   { method: 'PATCH', path: '/api/portal-admin/contacts/:id', access: mustBeAdmin, why: 'Granting or withdrawing a client contact\'s portal access.' },
   { method: 'POST', path: '/api/portal-admin/contacts/:id/invite', access: mustBeAdmin, why: 'Emailing a sign-in link to somebody outside the company.' },
+  { method: 'GET', path: '/api/questionnaires', access: signedIn, note: 'The service questionnaires, to choose one to send (#208). Templates, not client data: every signed-in user reads them; only admins write.' },
+  { method: 'POST', path: '/api/questionnaires', access: mustBeAdmin, why: 'Builds a service questionnaire (#208): what clients are asked before a quotation. Admin › Templates.' },
+  { method: 'GET', path: '/api/questionnaires/:id', access: signedIn, note: 'One questionnaire and its versions (#208), as above.' },
+  { method: 'PATCH', path: '/api/questionnaires/:id', access: mustBeAdmin, why: 'Renames a questionnaire or switches it off (#208).' },
+  { method: 'POST', path: '/api/questionnaires/:id/versions', access: mustBeAdmin, why: 'A new draft of a questionnaire (#208); published versions are frozen.' },
+  { method: 'PATCH', path: '/api/questionnaire-versions/:id', access: mustBeAdmin, why: 'Edits a draft questionnaire and its pricing rules (#208).' },
+  { method: 'POST', path: '/api/questionnaire-versions/:id/import', access: mustBeAdmin, why: 'Replaces the questions of a draft questionnaire with a whole, valid definition from a file (#208 phase 1b); a published version is refused and nothing is published.' },
+  { method: 'POST', path: '/api/questionnaire-versions/:id/publish', access: mustBeAdmin, why: 'Publishes a draft questionnaire (#208) once its form and pricing pass every check; the previous version is retired.' },
+  { method: 'POST', path: '/api/questionnaire-versions/:id/preview-pricing', access: mustBeAdmin, why: 'Shows the quotation lines a questionnaire version\'s pricing makes of sample answers (#208 phase 2); saves nothing. Admin › Templates.' },
+  { method: 'DELETE', path: '/api/questionnaire-versions/:id', access: mustBeAdmin, why: 'Discards a draft questionnaire version (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses', access: signedIn, restrictions: ['parent-owner'], note: 'Sends a questionnaire from an enquiry (#208): only on an enquiry the caller can open.' },
+  { method: 'GET', path: '/api/questionnaire-responses', access: signedIn, restrictions: ['parent-owner'], note: 'The questionnaires sent from one enquiry (#208), when the caller can open it.' },
+  { method: 'GET', path: '/api/questionnaire-responses/:id', access: signedIn, restrictions: ['record-owner'], note: 'The answers a client gave (#208): the owner of the enquiry, and admins.' },
+  { method: 'PATCH', path: '/api/questionnaire-responses/:id', access: signedIn, restrictions: ['record-owner'], note: 'Staff filling in a questionnaire for the client, on an enquiry they own (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/files', access: signedIn, restrictions: ['record-owner'], note: 'A file for a file question, by staff filling in (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/submit', access: signedIn, restrictions: ['record-owner'], note: 'Staff submitting what they filled in for the client (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/link', access: signedIn, restrictions: ['record-owner'], note: 'A new link to the questionnaire, to copy or email (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/remind', access: signedIn, restrictions: ['record-owner'], note: 'Emails the client a reminder with a new link (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/revoke', access: signedIn, restrictions: ['record-owner'], note: 'Every open link to the questionnaire stops working (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/reopen', access: signedIn, restrictions: ['record-owner'], note: 'A submitted questionnaire is open to changes again (#208).' },
+  { method: 'POST', path: '/api/questionnaire-responses/:id/quotation', access: signedIn, restrictions: ['record-owner'], note: 'A Draft quotation priced from the answers, or the next revision of the enquiry\'s Draft or Submitted one (#208 phase 2): the owner of the enquiry, and admins. Never sent from here.' },
+  { method: 'GET', path: '/api/portal-admin/actions', access: signedIn, restrictions: ['record-owner'], note: 'What clients said in the portal (#198): queries and payment advice to act on. Scoped like the PO: an admin sees every client\'s, anyone else those on a PO they can open.' },
+  { method: 'GET', path: '/api/portal-admin/actions/by-stage', access: signedIn, restrictions: ['record-owner'], note: 'The client\'s latest word on each invoice (#198), for the badges on Collections and Payment stages. Scoped like the PO.' },
+  { method: 'POST', path: '/api/portal-admin/actions/:id/resolve', access: signedIn, restrictions: ['record-owner'], note: 'Resolve a client\'s query, or reject a query or a payment advice with a reason the client sees (#198). Only on a PO the caller can open.' },
+  { method: 'GET', path: '/api/portal-admin/companies/:id/preview/:section', access: mustBeAdmin, why: 'Preview as client (#198): everything the client\'s portal shows of this company, invoices and GST included.' },
 
   // ----------------------------------------------------------- accounting
   { method: 'GET', path: '/api/accounting/status', access: mustBeAdmin, why: 'The whole accounting router is admin-only: it is the books (#42).' },
@@ -463,6 +534,7 @@ export const routes = [
   { method: 'POST', path: '/api/purchase-orders/:poNumber/undo-from-email', access: mustBeAdmin, why: 'Deletes a PO registered from email with its stages and project, and puts its quotation back.' },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/stages', access: signedIn },
   { method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn },
+  { method: 'GET', path: '/api/vendor-invoices/:id/full', access: signedIn, note: 'A travel agency invoice with its lines, their trips, its credit notes and files (#196). Open as /api/vendor-invoices is.' },
   { method: 'POST', path: '/api/payment-stages/:id/invoice', access: signedIn },
   // Invoices we emailed that need a person (docs/email-po-plan.md §3.10.5).
   { method: 'GET', path: '/api/payment-stages/invoice-review', access: signedIn, restrictions: ['parent-owner'], note: 'A salesperson sees the items on POs they may open; one matched to no PO is an admin\'s.' },
@@ -494,8 +566,16 @@ export const routes = [
   // vendor-invoice ones are closed on the generic form by `protectedFields`
   // and move only through the routes here.
   {
-    method: 'POST', path: '/api/vendor-invoices/:id/pay', access: signedIn,
-    note: 'Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id.',
+    method: 'POST', path: '/api/vendor-invoices/:id/pay', access: signedIn, restrictions: ['travel-desk-only'],
+    note: 'Paying a travel agency: the travel desk\'s work and the administrator\'s, so the handler allows admin and HR and refuses sales (#214). Until then the gate was open to every signed-in role, which let a sales user pay an agency — not a decision anybody took, just an open door. The figure is still the absolute total settled and the route writes the difference as a row in travel_vendor_payments; amount_paid and payment_date are derived from those rows and move only through here, never through PATCH /api/vendor-invoices/:id.',
+  },
+  {
+    method: 'POST', path: '/api/vendor-invoices/:id/pay/correct', access: mustBeAdmin,
+    why: 'The only route that can take a vendor payment back off an invoice, or move its cash and TDS legs against each other, so it is the one place a figure already booked against an agency bill can be reduced (#214). It refuses to run without a reason, appends a row rather than editing the ledger — the original payment and the bank advice attached to it are never touched — and records the before and after in the same transaction. Paying is the travel desk\'s; deciding that what the travel desk recorded was wrong is not, for the same reason /api/expense-claims/:id/correct is the administrator\'s: this is the correction path for money, not a tidy-up.',
+  },
+  {
+    method: 'POST', path: '/api/travel-logs/:travelId/billed-stage', access: signedIn,
+    note: 'Which client invoice recovered a trip\'s cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk\'s call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it.',
   },
   {
     method: 'POST', path: '/api/expense-claims/:id/decide', access: mustBeAdmin,
@@ -578,6 +658,9 @@ export const routes = [
  *   the earlier `visibleTo` hook, which matched the free-text sales_person,
  *   with a predicate on owner_user_id.)
  */
+/** HR may read, write and delete it (#196 §3). */
+const HR_ALL = Object.freeze({ read: true, write: true, delete: true });
+
 export const resourceAccess = {
   // --- a salesperson's own working records -------------------------------
   enquiries: {
@@ -593,19 +676,28 @@ export const resourceAccess = {
     restrictions: ['record-owner'],
     why: 'A salesperson\'s own working record. A project is the work won from one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them.' },
   onboarding: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  'travel-logs': { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
+  'travel-logs': {
+    read: 'any', write: 'any', delete: 'any', hr: HR_ALL,
+    why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk\'s own record too (#196).',
+    protectedFields: ['billed_stage_id'],
+    protectedBecause: 'Which client invoice recovered a trip\'s cost moves through POST /api/travel-logs/:travelId/billed-stage, which HR cannot reach and which writes an audit row naming the account. Leaving it on the generic form made the Trip screen\'s hidden selector the only restriction there was: HR has full write access to a trip (#196 §3), so an HR caller — or any other — could PATCH billed_stage_id straight through the API and mark a trip as billed on an invoice, or unmark one, with nothing recorded (#214).',
+  },
   engagements: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   tasks: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   notes: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  attachments: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
+  attachments: { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, restrictions: ['hr-travel-only'], why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2). HR reaches only the files on trips and vendor invoices (#196).' },
   'quotation-lines': { read: 'any', write: 'any', delete: 'any', why: 'The lines of a quotation, edited with it.' },
+  // --- the travel desk (#196) -------------------------------------------
+  'travel-segments': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'A trip\'s legs, kept with it: open as travel-logs is.' },
+  'vendor-invoice-lines': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'The lines of a travel vendor invoice, edited with it: open as vendor-invoices is.' },
+  'vendor-credit-notes': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'A travel vendor\'s credit and cancellation notes, entered with its invoices.' },
 
   // --- travel finance (#85) ---------------------------------------------
   'vendor-invoices': {
-    read: 'any', write: 'any', delete: 'any',
+    read: 'any', write: 'any', delete: 'any', hr: HR_ALL,
     why: 'Sales enter vendor invoices as ordinary work.',
     protectedFields: ['amount_paid', 'payment_date'],
-    protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that audits it. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85).',
+    protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that audits it. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85). Since #214 both columns are also *derived*: they are kept by a trigger from the travel_vendor_payments ledger, so a figure written here by hand would be silently undone by the next payment anyway.',
   },
   'expense-claims': {
     read: 'any', write: 'any', delete: 'any',
@@ -635,8 +727,9 @@ export const resourceAccess = {
   'pipeline-stages': { read: 'any', write: 'admin', delete: 'admin', why: 'A stage\'s status mapping and probability rewrite quotation statuses and the whole forecast.' },
   services: { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'sector-aliases': { read: 'any', write: 'admin', delete: 'admin', why: 'Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report.' },
-  'travel-vendors': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
+  'travel-vendors': { read: 'any', write: 'admin', delete: 'admin', hr: HR_ALL, why: 'A Settings catalogue: one edit re-labels every record that used the old value. HR owns the agency list (#196), so an administrator and HR change it (hrWrites).' },
   'expense-categories': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
+  'trip-types': { read: 'any', write: 'admin', delete: 'admin', hr: HR_ALL, why: 'A Settings catalogue (#196): a type\'s chargeable flag decides which trips may be billed to a client. Kept by an administrator and the travel desk (hrWrites).' },
   'exchange-rates': { read: 'any', write: 'admin', delete: 'admin', why: 'One rate re-values every historical deal in every report.' },
   'document-profiles': { read: 'any', write: 'admin', delete: 'admin', why: 'A client\'s document note goes into every AI reading of that client\'s POs or invoices, and its PO-number pattern sends a PO that does not fit to review: one edit changes what the readers register.' },
   holidays: { read: 'any', write: 'admin', delete: 'admin', why: 'The working calendar. A holiday decides which days count towards a reply clock, a follow-up deadline and every "working days" figure, so one edit moves what the whole company is judged late by. Correcting the dates that move each year is an administrator\'s job (adminOnlyWrites).' },
@@ -665,3 +758,54 @@ export const crudRoutes = () =>
 
 /** Every declared route: the explicit ones and the generated CRUD ones. */
 export const policyRoutes = () => [...routes, ...crudRoutes()];
+
+// ---------------------------------------------------------------------
+// The HR role (#196 §3)
+// ---------------------------------------------------------------------
+
+/**
+ * The explicit routes the HR role may use, on top of the CRUD resources
+ * whose entry above carries `hr`. Everything else answers 403 to HR
+ * (hrGate in auth/middleware.js), whatever its `access` says: HR is the
+ * travel desk, not a sales user with fewer rows.
+ *
+ * Its own account, notifications and saved views; the dropdowns (lookups
+ * answers HR with the travel lists only); uploading and opening documents;
+ * the travel dashboard and payables; a trip in full; paying a vendor
+ * invoice, which stays open to every signed-in role as before.
+ */
+export const HR_ROUTES = [
+  'GET /api/auth/account', 'PATCH /api/auth/account', 'POST /api/auth/account/password',
+  'DELETE /api/auth/account/identities/:provider', 'DELETE /api/auth/account/sessions/:id', 'POST /api/auth/account/sessions/revoke-all',
+  'GET /api/notifications', 'GET /api/notifications/summary', 'POST /api/notifications/read-all', 'POST /api/notifications/:id/read',
+  'GET /api/views', 'POST /api/views', 'PATCH /api/views/:id', 'DELETE /api/views/:id', 'POST /api/views/order',
+  'GET /api/lookups', 'GET /api/lookups/next-id/:kind', 'GET /api/settings',
+  'POST /api/documents', 'GET /api/documents/:id',
+  'GET /api/dashboard/travel', 'GET /api/dashboard/payables', 'GET /api/export/payables.csv',
+  'GET /api/travel-logs/:travelId/full', 'GET /api/vendor-invoices/:id/full', 'POST /api/vendor-invoices/:id/pay',
+  // The travel importer (#196 §5).
+  'GET /api/import/travel/template.xlsx', 'POST /api/import/travel', 'GET /api/import/travel',
+  'GET /api/import/travel/:id', 'PATCH /api/import/travel/:id', 'DELETE /api/import/travel/:id',
+  'PATCH /api/import/travel/:id/items/:itemId', 'POST /api/import/travel/:id/items/:itemId/split', 'POST /api/import/travel/:id/duplicates',
+  'POST /api/import/travel/:id/commit', 'POST /api/import/travel/:id/documents', 'POST /api/import/travel/documents',
+];
+
+const OPERATION_NEEDS = { list: 'read', read: 'read', create: 'write', update: 'write', delete: 'delete' };
+
+/** Every declared route HR may use: HR_ROUTES and the CRUD routes of the resources marked `hr`. */
+export function hrRoutes() {
+  const explicit = new Set(HR_ROUTES);
+  return policyRoutes().filter((r) => (r.resource
+    ? Boolean(resourceAccess[r.resource]?.hr?.[OPERATION_NEEDS[r.operation]])
+    : explicit.has(`${r.method} ${r.path}`)));
+}
+
+const pattern = (path) => new RegExp(`^${path.split('/').map((seg) => (seg.startsWith(':') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/')}/?$`);
+let compiledHr = null;
+
+/** May the HR role make this request? method: GET, POST…; path: as requested, without the query string. */
+export function hrMayUse(method, path) {
+  compiledHr ??= hrRoutes().map((r) => ({ method: r.method, re: pattern(r.path) }));
+  const m = method === 'HEAD' ? 'GET' : method;
+  return compiledHr.some((r) => r.method === m && r.re.test(path));
+}

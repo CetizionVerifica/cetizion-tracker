@@ -99,6 +99,7 @@ export const api = {
   exportUrl: (resource, params) => `${BASE}/export/${resource}.csv${qs(params)}`,
   exportXlsxUrl: (resource, params) => `${BASE}/export/${resource}.xlsx${qs(params)}`,
   importTemplateUrl: () => `${BASE}/import/template.csv`,
+  travelTemplateUrl: () => `${BASE}/import/travel/template.xlsx`,
   reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
   reportPdfUrl: (params) => `${BASE}/export/sales-report.pdf${qs(params)}`,
   auth: {

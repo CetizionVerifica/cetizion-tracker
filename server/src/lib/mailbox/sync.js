@@ -16,6 +16,7 @@ import { DISPLAY_ONLY_FOLDERS, microsoftConfigured, microsoftProvider, SKIPPED_F
 import { isPortalSender } from './poDetect.js';
 import { resolveParties } from '../../routes/communications.js';
 import { assertNotStaging } from '../ops/environment.js';
+import { clientEmailHold } from '../clientEmails.js';
 import { enqueue, retryQueued, runReaders } from './readerQueue.js';
 
 /** The two folders every mailbox has, read by name; push notifications come from these. */
@@ -128,7 +129,14 @@ function testProvider(account) {
     },
     async attachmentList(providerId) {
       if (takeFailure(account.id, 'attachments')) throw Object.assign(new Error('throttled'), { status: 429 });
-      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null }));
+      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null, kind: a.kind || 'file' }));
+    },
+    /** A forwarded email attached as an Outlook item: `item` on the pushed attachment, shaped as a message. */
+    async attachmentItem(providerId, attachmentId) {
+      const list = testAttachments.get(`${account.id}:${providerId}`) || [];
+      const a = list.find((x, n) => (x.provider_id || `att-${n}`) === attachmentId);
+      if (!a) throw Object.assign(new Error('Not found'), { status: 404 });
+      return a.item || null;
     },
     async message(providerId) {
       // pushTestFailure(id, { message: { status, reconnect, message } }): the next live read fails like Graph would.
@@ -397,17 +405,42 @@ async function storeAttachmentList(account, message, provider) {
   // not while a thread row is locked. A call that fails (throttled, timed
   // out) leaves attachments_listed_at empty, and the sync tries again later.
   let list;
-  try { list = await provider.attachmentList(message.provider_id); } catch { return false; }
+  try { list = await provider.attachmentList(message.provider_id); }
+  catch (err) {
+    // Logged: a list that fails every time (as a $select Graph refused did)
+    // is otherwise invisible, and no attachment ever shows.
+    console.warn(`[mail.attachments] the attachment list of a message in mailbox ${account.id} could not be read: ${err.status || ''} ${err.message}`.trim());
+    return false;
+  }
   await transaction(async (db) => {
     for (const a of list || []) {
       await db.query(
-        `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id`,
-        [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null]);
+        `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id, kind = EXCLUDED.kind`,
+        [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null,
+          ['file', 'item', 'reference'].includes(a.kind) ? a.kind : 'file']);
     }
     await db.query('UPDATE email_messages SET attachments_listed_at = now() WHERE id = $1', [message.id]);
   });
   return true;
+}
+
+/**
+ * The attachment lists of messages about to be shown that the sync has not
+ * read yet (a backlog it works through a few per sync), read now so the
+ * reader sees the files on opening the conversation, not some syncs later.
+ * Stored as the sync stores them, under the mailbox's visibility.
+ */
+export async function listAttachmentsNow(accountId, messages) {
+  const pending = messages.filter((m) => m.has_attachments && !m.attachments_listed_at && !m.removed_at).slice(0, 10);
+  if (!pending.length) return 0;
+  const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [accountId]);
+  if (!account || account.status !== 'active') return 0;
+  const provider = providerFor(account);
+  let n = 0;
+  for (const m of pending) if (await storeAttachmentList(account, m, provider)) n += 1;
+  if (n) await saveTokens(account, provider).catch(() => {});
+  return n;
 }
 
 /** Messages whose attachment list is still to be read (a failed call earlier), newest first, a few per sync. */
@@ -872,6 +905,20 @@ export async function replyToThread(threadId, html, by, { replyAll = true } = {}
   }
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [t.account_id]);
   if (t.conversation_id.startsWith('portal-')) return replyToPortal(t, account, html, by);
+  // A reply goes to the client from the mailbox, past lib/mail.js, so the
+  // admin's hold on client emails (lib/clientEmails.js) is checked here:
+  // logged as it would have gone, and refused so the writer knows. Only a
+  // thread the tracker tied to a client company or contact counts.
+  const held = (t.company_id || t.contact_id) ? await clientEmailHold({ query }, 'mailbox_reply') : null;
+  if (held) {
+    const { rows: [m] } = await query('SELECT from_email, to_emails FROM email_messages WHERE thread_id = $1 ORDER BY sent_at DESC LIMIT 1', [threadId]);
+    const to = [m?.from_email, ...(m?.to_emails || [])].filter((a) => a && a.toLowerCase() !== String(account.email || '').toLowerCase());
+    await query(
+      `INSERT INTO email_log (to_email, subject, template, entity, entity_id, status, mode, reason, body_text, body_html, sent_by, from_email)
+       VALUES ($1,$2,'mailbox_reply','email_thread',$3,'suppressed','mailbox',$4,$5,$6,$7,$8)`,
+      [[...new Set(to)].join(', ') || '(thread participants)', `RE: ${t.subject || ''}`, String(t.id), held, snippet(html, 10000), cleanHtml(html), by, account.email]);
+    throw Object.assign(new Error('Client emails are held by an admin, so this reply was not sent. It is kept in Settings, Client emails.'), { status: 409 });
+  }
   const provider = providerFor(account);
   await provider.reply(last.provider_id, html, { replyAll });
   await saveTokens(account, provider);

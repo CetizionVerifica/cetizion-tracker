@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { MIN_ROWS, rowsThatFit } from './pageFit.js';
 
 /**
  * Fetch on mount and whenever `deps` change, with a refetch handle so a
@@ -42,6 +43,8 @@ export function useList(resource, params = {}, deps = []) {
   return { ...result, rows: result.data?.data ?? [], total: result.data?.total ?? 0 };
 }
 
+const LOOKUP_DEFAULTS = { services: [], owners: [], catalogue: [], travel_vendors: [], travel_vendor_list: [], trip_types: [], staff: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], pipeline_stages: [], lost_reasons: [], lead_sources: [], payment_terms_templates: [], onboarding_templates: [], enums: {}, limits: {} };
+
 /** Lookups change rarely; fetch them once per session and share. */
 let lookupCache = null;
 export function useLookups() {
@@ -56,7 +59,9 @@ export function useLookups() {
       })
       .catch(() => {});
   }, []);
-  return data || { services: [], catalogue: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], pipeline_stages: [], lost_reasons: [], lead_sources: [], payment_terms_templates: [], onboarding_templates: [], enums: {}, limits: {} };
+  // Every list present even when the server sends fewer: the travel desk's
+  // lookups (#196) carry the travel lists only.
+  return { ...LOOKUP_DEFAULTS, ...(data || {}) };
 }
 
 export function invalidateLookups() {
@@ -130,4 +135,36 @@ export function useMediaQuery(query) {
     return () => mq.removeEventListener('change', onChange);
   }, [query]);
   return matches;
+}
+
+/**
+ * How many rows of `rowHeight` an element has room for (#250), re-measured
+ * as the window changes, or null until it has been laid out.
+ *
+ * Returns `[measure, rows]`: pass `measure` as the element's ref. A ref
+ * callback rather than a ref object, so an element that appears later (the
+ * inbox's list, back from the setup screen) is measured when it does.
+ *
+ * The first measurement is taken at once, so the list is not fetched at a
+ * guessed size and then again at the right one; later ones wait until the
+ * resize has settled, so dragging a window edge is one request, not one
+ * per pixel.
+ */
+export function useRowsThatFit(rowHeight, { min = MIN_ROWS, settleMs = 150 } = {}) {
+  const [node, setNode] = useState(null);
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    if (!node) return undefined;
+    const measure = () => setRows(rowsThatFit(node.clientHeight, rowHeight, min));
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    let timer = null;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(measure, settleMs);
+    });
+    observer.observe(node);
+    return () => { clearTimeout(timer); observer.disconnect(); };
+  }, [node, rowHeight, min, settleMs]);
+  return [setNode, rows];
 }

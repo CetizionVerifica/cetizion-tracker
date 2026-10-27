@@ -58,10 +58,15 @@ function assertMayImport(scope) {
  *
  *   exchange rates come from the rate feed, and a hand-written one is the
  *   thing fx:correction exists to undo.
+ *
+ *   the travel desk's legs, agency invoice lines, credit notes and trip
+ *   types are read here, never written (#196 §7): the travel import
+ *   writes them, with its review, and HR keeps the trip types.
  */
 const NOT_BULK = new Set([
   'quotation-lines', 'payment-stages', 'payment-terms-template-lines', 'onboarding-template-lines',
   'notes', 'tasks', 'attachments', 'exchange-rates',
+  'travel-segments', 'vendor-invoice-lines', 'vendor-credit-notes', 'trip-types',
 ]);
 
 export const importable = () => Object.keys(resources).filter((k) => !NOT_BULK.has(k) && resources[k].schema);

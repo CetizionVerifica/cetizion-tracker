@@ -3,6 +3,7 @@ import { findUserById } from '../lib/users.js';
 import { sessionIsLive } from '../lib/sessions.js';
 import { authConfig } from './config.js';
 import { sessionSubject, verifySession } from './session.js';
+import { hrMayUse } from '../lib/authz/policy.js';
 
 /**
  * Who is making this request.
@@ -127,3 +128,16 @@ export const requireRole = (...roles) => (req, res, next) => {
 };
 
 export const requireAdmin = requireRole('admin');
+
+/**
+ * The HR role reaches only the travel desk (#196 §3): the routes the policy
+ * marks for HR (lib/authz/policy.js, HR_ROUTES and the `hr` flag on CRUD
+ * resources). Anything else answers 403, whatever its own gate says, so a
+ * route added later is closed to HR until somebody decides otherwise.
+ * Every other role passes straight through.
+ */
+export const hrGate = (req, res, next) => {
+  if (req.user?.role !== 'hr') return next();
+  if (hrMayUse(req.method, req.originalUrl.split('?')[0])) return next();
+  return next(new ApiError(403, 'This is not part of the HR role'));
+};

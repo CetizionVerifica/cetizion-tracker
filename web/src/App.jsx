@@ -7,6 +7,7 @@ import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
 import FollowUps from './pages/FollowUps.jsx';
 import Enquiries from './pages/Enquiries.jsx';
+import EnquiryDetail from './pages/EnquiryDetail.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Deliverables from './pages/Deliverables.jsx';
@@ -37,12 +38,14 @@ import TravelLogs from './pages/TravelLogs.jsx';
 import TripDetail from './pages/TripDetail.jsx';
 import InvoiceRun from './pages/InvoiceRun.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
+import VendorInvoiceDetail from './pages/VendorInvoiceDetail.jsx';
 import Payables from './pages/Payables.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
 import { useTheme } from 'next-themes';
 import SettingsArea from './pages/SettingsArea.jsx';
 import ImportReview from './pages/ImportReview.jsx';
+import TravelImportReview from './pages/TravelImportReview.jsx';
 import Inbox from './pages/Inbox.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
@@ -94,19 +97,30 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
+  Award,
   BarChart3,
+  BookOpen,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  Columns3,
   Lightbulb,
   Building2,
   ClipboardList,
   FileText,
   FolderKanban,
   Home,
+  Megaphone,
+  RefreshCw,
+  TrendingUp,
+  Wallet,
   Inbox as InboxIcon,
   IndianRupee,
   LogOut,
   PanelLeft,
   Plane,
   PinOff,
+  Receipt,
   Search,
   Monitor,
   Moon,
@@ -120,22 +134,61 @@ function ImportReviewPage() {
   const { id } = useParams();
   return <ImportReview key={id} />;
 }
+function TravelImportReviewPage() {
+  const { id } = useParams();
+  return <TravelImportReview key={id} />;
+}
 
 /**
- * Two links, three saved views and six record types.
+ * The sidebar, grouped by the process (web/CLAUDE.md §3).
  *
- * This used to list thirty screens in six groups, and the design's finding
- * was that a list that long is not navigation — it is a filing cabinet you
- * read every time. Everything that left is a word away in ⌘K, which is
- * also the only place that answers "how do I do X", because it holds the
- * verbs rather than the screens.
+ * It used to be four links, the pinned views and six record types, with
+ * everything else reached through ⌘K. That kept it short but hid the
+ * process: nobody new could see that Collections or Renewals existed, or
+ * where a deal goes after it is won. The groups read top to bottom in the
+ * order the work happens, each one collapses, and ⌘K still holds the verbs.
  */
 const NAV_TOP = [
   { to: '/', icon: Home, label: 'Today', end: true },
   { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
-  // A landing screen, like Reports: the five questions to start a day on.
-  { to: '/insights', icon: Lightbulb, label: 'Insights' },
-  { to: '/reports', icon: BarChart3, label: 'Reports' },
+];
+
+const NAV_GROUPS = [
+  { key: 'sell', label: 'Sell', items: [
+    { to: '/enquiries', icon: Megaphone, label: 'Enquiries' },
+    { to: '/quotations', icon: FileText, label: 'Deals' },
+    { to: '/pipeline', icon: Columns3, label: 'Pipeline' },
+    { to: '/renewals', icon: RefreshCw, label: 'Renewals' },
+    { to: '/companies', icon: Building2, label: 'Companies' },
+  ] },
+  { key: 'deliver', label: 'Deliver', items: [
+    { to: '/projects', icon: FolderKanban, label: 'Projects' },
+    { to: '/schedule', icon: CalendarDays, label: 'Schedule' },
+    { to: '/deliverables', icon: Award, label: 'Certificates' },
+  ] },
+  { key: 'money', label: 'Money', items: [
+    { to: '/purchase-orders', icon: ClipboardList, label: 'Orders' },
+    { to: '/payment-stages', icon: IndianRupee, label: 'Invoicing' },
+    { to: '/collections', icon: Wallet, label: 'Collections' },
+    { to: '/cashflow', icon: TrendingUp, label: 'Cash flow' },
+    { to: '/accounting', icon: BookOpen, label: 'Accounting', adminOnly: true },
+  ] },
+  { key: 'travel', label: 'Travel', items: [
+    { to: '/travel', icon: Plane, label: 'Trips' },
+    { to: '/expense-claims', icon: Receipt, label: 'Expense claims' },
+    // The agency's bills. HR keeps them (NAV_HR_GROUPS) and an administrator
+    // settles them, so until now an admin reached the screen only through ⌘K
+    // (#214 decision 8). Not a salesperson's: paying a travel agency is the
+    // travel desk's work with the administrator, so the entry is adminOnly
+    // as Accounting is. The route itself is unchanged — every signed-in role
+    // could already open it; this is the missing door, not new access.
+    { to: '/vendor-invoices', icon: Receipt, label: 'Vendor invoices', adminOnly: true },
+  ] },
+  { key: 'insights', label: 'Insights', items: [
+    // A landing screen, like Reports: the five questions to start a day on.
+    { to: '/insights', icon: Lightbulb, label: 'Insights' },
+    { to: '/reports', icon: BarChart3, label: 'Reports' },
+  ] },
 ];
 
 /**
@@ -168,25 +221,74 @@ function viewHref(view) {
   return query ? `${base}?${query}` : base;
 }
 
-const NAV_RECORDS = [
-  { to: '/quotations', icon: FileText, label: 'Deals' },
-  { to: '/companies', icon: Building2, label: 'Companies' },
-  { to: '/projects', icon: FolderKanban, label: 'Projects' },
-  { to: '/purchase-orders', icon: ClipboardList, label: 'Orders' },
-  { to: '/payment-stages', icon: IndianRupee, label: 'Payment stages' },
-  { to: '/travel', icon: Plane, label: 'Trips' },
+/**
+ * The travel desk's sidebar (#196 §3): HR sees its own records and the
+ * travel dashboard, nothing on the sales side.
+ */
+const NAV_HR_TOP = [
+  { to: '/travel-dashboard', icon: Home, label: 'Travel dashboard', end: true },
+];
+const NAV_HR_GROUPS = [
+  { key: 'travel-desk', label: 'Travel desk', items: [
+    { to: '/travel', icon: Plane, label: 'Trips' },
+    { to: '/vendor-invoices', icon: Receipt, label: 'Vendor invoices' },
+    { to: '/payables', icon: IndianRupee, label: 'Payables' },
+  ] },
 ];
 
+/** The screens the HR role may open; anything else goes to its dashboard. */
+const HR_PATHS = [/^\/travel(\/|$)/, /^\/travel-dashboard$/, /^\/vendor-invoices(\/|$)/, /^\/vendor-credit-notes(\/|$)/,
+  /^\/payables$/, /^\/settings(\/|$)/, /^\/account(\/|$)/, /^\/notifications$/, /^\/import-travel(\/|$)/];
+export const hrMayOpen = (path) => HR_PATHS.some((re) => re.test(path));
+
+
+// On the navy sidebar a count is a filled chip, so it reads in both themes.
 const TONES = {
-  late: { dot: 'bg-late', count: 'text-late' },
-  waiting: { dot: 'bg-waiting', count: 'text-waiting' },
-  info: { dot: 'bg-info', count: 'text-muted-foreground' },
+  late: { dot: 'bg-late', count: 'bg-late text-late-foreground' },
+  waiting: { dot: 'bg-waiting', count: 'bg-waiting text-waiting-foreground' },
+  info: { dot: 'bg-sidebar-primary', count: 'bg-sidebar-accent text-sidebar-foreground' },
 };
 
 function SideHeading({ children }) {
   return (
-    <div className="px-2.5 pt-5 pb-2 text-[10.5px] font-semibold tracking-[0.1em] text-muted-foreground uppercase">
+    <div className="px-2.5 pt-5 pb-2 text-[11px] font-bold tracking-[0.12em] text-sidebar-muted uppercase">
       {children}
+    </div>
+  );
+}
+
+const COLLAPSED_KEY = 'cetizion.nav.collapsed';
+
+/** Which groups are folded, remembered per browser. */
+function useCollapsedGroups() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch { return new Set(); }
+  });
+  const toggle = (key) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next])); } catch { /* private window */ }
+    return next;
+  });
+  return [collapsed, toggle];
+}
+
+/** A group heading that folds its links away. */
+function SideGroup({ group, open, onToggle, children }) {
+  const id = `nav-group-${group.key}`;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex w-full items-center gap-1 rounded-sm px-2.5 pt-5 pb-2 text-left text-[11px] font-bold tracking-[0.12em] text-sidebar-muted uppercase hover:text-sidebar-foreground"
+      >
+        <span className="flex-1">{group.label}</span>
+        <ChevronDown className={cn('size-3.5 transition-transform duration-150', !open && '-rotate-90')} strokeWidth={2} aria-hidden="true" />
+      </button>
+      {open && <div id={id} className="space-y-0.5">{children}</div>}
     </div>
   );
 }
@@ -197,9 +299,9 @@ function SideLink({ item, counts, alerts }) {
       to={item.to}
       end={item.end}
       className={({ isActive }) => cn(
-        'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
-        'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-        isActive && 'bg-primary/12 font-semibold text-primary'
+        'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors duration-150',
+        'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+        isActive && 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground'
       )}
     >
       {/* Decorative — the label is what names the page. */}
@@ -208,7 +310,7 @@ function SideLink({ item, counts, alerts }) {
       {item.badge && counts[item.badge] > 0 && (
         <span className={cn(
           'num rounded-full px-1.5 py-px text-[11px] font-semibold',
-          alerts[item.badge] ? 'bg-late/15 text-late' : 'bg-secondary text-secondary-text'
+          alerts[item.badge] ? 'bg-late text-late-foreground' : 'bg-sidebar-accent text-sidebar-foreground'
         )}>
           {counts[item.badge]}
         </span>
@@ -250,6 +352,12 @@ function AdminOnly({ children }) {
   return isAdmin ? children : <NotFound />;
 }
 
+/** The travel import is the travel desk's: an administrator or HR (#196 §3). */
+function TravelDeskOnly({ children }) {
+  const { isAdmin, isHr } = useAuth();
+  return isAdmin || isHr ? children : <NotFound />;
+}
+
 /**
  * The sidebar's contents, rendered twice: inside a Sheet on a phone and
  * inside a fixed column above lg. One definition, so the drawer cannot
@@ -271,7 +379,7 @@ function ThemeChoice() {
   useEffect(() => setReady(true), []);
   if (!ready) return null;
   return (
-    <DropdownMenuRadioGroup value={theme || 'dark'} onValueChange={setTheme}>
+    <DropdownMenuRadioGroup value={theme || 'light'} onValueChange={setTheme}>
       <DropdownMenuRadioItem value="light"><Sun className="size-4" aria-hidden="true" />Light</DropdownMenuRadioItem>
       <DropdownMenuRadioItem value="dark"><Moon className="size-4" aria-hidden="true" />Dark</DropdownMenuRadioItem>
       <DropdownMenuRadioItem value="system"><Monitor className="size-4" aria-hidden="true" />Match the system</DropdownMenuRadioItem>
@@ -280,13 +388,19 @@ function ThemeChoice() {
 }
 
 function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, onUnpin, mode }) {
+  const { isHr, isAdmin } = useAuth();
+  const navTop = isHr ? NAV_HR_TOP : NAV_TOP;
+  const navGroups = (isHr ? NAV_HR_GROUPS : NAV_GROUPS)
+    .map((g) => ({ ...g, items: g.items.filter((item) => !item.adminOnly || isAdmin) }));
+  const [collapsed, toggleGroup] = useCollapsedGroups();
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-        <Avatar className="size-6 rounded-[6px]">
-          <AvatarFallback className="rounded-[6px] bg-primary text-[12px] font-bold text-primary-foreground">C</AvatarFallback>
-        </Avatar>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">Cetizion Verifica</span>
+        {/* No company name or logo here: the app is the product, not a brand page. */}
+        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-sidebar-primary">
+          <Check className="size-4 text-sidebar-primary-foreground" strokeWidth={3} aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1 truncate font-display text-[14px] font-bold text-sidebar-accent-foreground">Sales Tracker</span>
       </div>
 
       {/* The way to find anything, said once and kept in view. */}
@@ -294,24 +408,32 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
         <Button
           variant="outline"
           onClick={onSearch}
-          className="h-control w-full justify-start gap-2 bg-card px-2.5 font-normal"
+          className="h-9 w-full justify-start gap-2 border-sidebar-border bg-sidebar-accent/40 px-2.5 font-normal text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         >
-          <Search className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
-          <span className="flex-1 truncate text-left text-[12.5px] text-muted-foreground">Search or do anything</span>
-          <kbd className="num rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10.5px] text-secondary-text">⌘K</kbd>
+          <Search className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+          <span className="flex-1 truncate text-left text-[13px]">Search or do anything</span>
+          <kbd className="num rounded-[4px] bg-sidebar-accent px-1.5 py-0.5 text-[10.5px] text-sidebar-foreground">⌘K</kbd>
         </Button>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
         <nav className="space-y-0.5 px-2 pb-2">
-          {NAV_TOP.map((item) => (
+          {navTop.map((item) => (
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
+          ))}
+
+          {navGroups.map((group) => (
+            <SideGroup key={group.key} group={group} open={!collapsed.has(group.key)} onToggle={() => toggleGroup(group.key)}>
+              {group.items.map((item) => (
+                <SideLink key={item.to} item={item} counts={counts} alerts={alerts} />
+              ))}
+            </SideGroup>
           ))}
 
           <SideHeading>Pinned</SideHeading>
           {pinned.length === 0 && (
-            <p className="px-2.5 pb-1 text-[11.5px]/[1.5] text-muted-foreground">
-              Filter any list, then <span className="text-secondary-text">Save these filters</span> to keep it here with its count.
+            <p className="px-2.5 pb-1 text-[12px]/[1.5] text-sidebar-muted">
+              Filter any list, then <span className="text-sidebar-foreground">Save these filters</span> to keep it here with its count.
             </p>
           )}
           {pinned.map((view) => (
@@ -319,9 +441,9 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
               <NavLink
                 to={viewHref(view)}
                 className={({ isActive }) => cn(
-                  'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
-                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                  isActive && 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors duration-150',
+                  'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+                  isActive && 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground'
                 )}
               >
                 {/* A square as well as a colour: the state is never hue alone. */}
@@ -331,7 +453,7 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
                 <span className="min-w-0 flex-1 truncate">{view.name}</span>
                 {view.count > 0 && (
                   <span className={cn(
-                    'num text-[11px] font-semibold group-hover/pin:opacity-0',
+                    'num rounded-full px-1.5 py-px text-[11px] font-semibold group-hover/pin:opacity-0',
                     (TONES[view.tone] || TONES.info).count
                   )}>
                     {view.count}
@@ -345,16 +467,11 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
                 aria-label={`Unpin ${view.name}`}
                 title="Unpin from the sidebar"
                 onClick={() => onUnpin(view)}
-                className="absolute inset-y-0 right-1.5 hidden place-items-center rounded-[4px] px-1 text-muted-foreground hover:text-late group-hover/pin:grid"
+                className="absolute inset-y-0 right-1.5 hidden place-items-center rounded-[4px] px-1 text-sidebar-muted hover:text-sidebar-accent-foreground group-hover/pin:grid"
               >
                 <PinOff className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
               </button>
             </div>
-          ))}
-
-          <SideHeading>Records</SideHeading>
-          {NAV_RECORDS.map((item) => (
-            <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
         </nav>
       </ScrollArea>
@@ -367,12 +484,12 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
           knowing the palette exists, which is what stranded it before. */}
       <div className="flex items-center gap-2 px-3 py-3">
         <Avatar className="size-6">
-          <AvatarFallback className="bg-secondary text-[10px] font-semibold text-primary">{initials(displayName)}</AvatarFallback>
+          <AvatarFallback className="bg-sidebar-accent text-[10px] font-semibold text-sidebar-accent-foreground">{initials(displayName)}</AvatarFallback>
         </Avatar>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-secondary-text" title={displayName}>{displayName}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-sidebar-foreground" title={displayName}>{displayName}</span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Settings and sign out" className="size-7 shrink-0">
+            <Button variant="ghost" size="icon" aria-label="Settings and sign out" className="size-8 shrink-0 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
               <SettingsIcon className="size-4" strokeWidth={1.75} aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
@@ -470,7 +587,7 @@ export default function App() {
       if (!window.matchMedia(WIDE).matches) setHidden(true);
     } catch { /* private mode */ }
   }, [location.pathname]);
-  const { displayName, signOut, isAdmin, mode } = useAuth();
+  const { displayName, signOut, isAdmin, isHr, mode } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const isWide = useIsWide();
 
@@ -478,7 +595,8 @@ export default function App() {
   // on someone, visible without opening anything.
   const { data: nData, refetch: refetchBell } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   useNotificationPopups(refetchBell);
-  const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
+  // HR has no inbox (#196): the travel desk reads no client mail.
+  const { data: iData } = useFetch(() => (isHr ? Promise.resolve(null) : api.raw('/inbox/summary')), [location.pathname, isHr]);
   // A pinned view is only worth its place if it says how much is behind it,
   // and the count is the same one the list shows when you click through.
   const { data: vData, refetch: refetchViews } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
@@ -512,7 +630,7 @@ export default function App() {
           is the column it always was, and `hidden` still collapses it. */}
       {!isWide && (
       <Sheet open={!hidden} onOpenChange={(open) => setHidden(!open)}>
-        <SheetContent side="left" className="w-60 gap-0 border-sidebar-border bg-sidebar p-0">
+        <SheetContent side="left" className="w-64 gap-0 border-sidebar-border bg-sidebar p-0">
           <SheetHeader className="sr-only">
             <SheetTitle>Menu</SheetTitle>
             <SheetDescription>Today, the inbox, your pinned views and the records.</SheetDescription>
@@ -527,7 +645,7 @@ export default function App() {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-30 hidden w-60 shrink-0 border-r border-sidebar-border bg-sidebar transition-transform duration-150 lg:flex lg:flex-col',
+          'fixed inset-y-0 left-0 z-30 hidden w-64 shrink-0 border-r border-sidebar-border bg-sidebar transition-transform duration-150 lg:flex lg:flex-col',
           hidden && 'lg:-translate-x-full'
         )}
       >
@@ -537,7 +655,9 @@ export default function App() {
         />
       </aside>
 
-      <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'lg:ml-60')}>
+      <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'lg:ml-64')}>
+        {/* The travel desk opens its own screens only (#196); the server refuses the rest anyway. */}
+        {isHr && !hrMayOpen(location.pathname) ? <Navigate to="/travel-dashboard" replace /> : (
         <Routes>
           <Route path="/" element={<Today />} />
           <Route path="/worklist" element={<Worklist />} />
@@ -549,6 +669,7 @@ export default function App() {
           <Route path="/deliverables" element={<Deliverables />} />
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/enquiries" element={<Enquiries />} />
+          <Route path="/enquiries/:key" element={<EnquiryDetail />} />
           <Route path="/quotations" element={<Quotations />} />
           <Route path="/quotations/:key" element={<QuotationDetail />} />
           <Route path="/pipeline" element={<Pipeline />} />
@@ -563,9 +684,9 @@ export default function App() {
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
           <Route path="/account/*" element={<Account />} />
-          <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
-          <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Insights /></Suspense>} />
-          <Route path="/reports/scheduled" element={<AdminOnly><Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><ScheduledReports /></Suspense></AdminOnly>} />
+          <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton h-[320px]" /></div>}><Reports /></Suspense>} />
+          <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton h-[320px]" /></div>}><Insights /></Suspense>} />
+          <Route path="/reports/scheduled" element={<AdminOnly><Suspense fallback={<div className="page"><div className="skeleton h-[320px]" /></div>}><ScheduledReports /></Suspense></AdminOnly>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />
@@ -574,6 +695,7 @@ export default function App() {
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
+          <Route path="/vendor-invoices/:id" element={<VendorInvoiceDetail />} />
           <Route path="/payables" element={<Payables />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
@@ -588,8 +710,10 @@ export default function App() {
           <Route path="/import" element={<LegacyRedirect to="/settings/import" />} />
           {/* A batch in progress is its own screen, not a settings pane. */}
           <Route path="/import/:id" element={<AdminOnly><ImportReviewPage /></AdminOnly>} />
+          <Route path="/import-travel/:id" element={<TravelDeskOnly><TravelImportReviewPage /></TravelDeskOnly>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        )}
       </main>
     </div>
     </SidebarContext.Provider>
@@ -611,7 +735,7 @@ function LegacyRedirect({ to }) {
   return <Navigate to={`${to}${search}`} replace />;
 }
 
-export function PageHeader({ title, subtitle, actions }) {
+export function PageHeader({ title, subtitle, actions, eyebrow }) {
   const { hidden, toggle } = useContext(SidebarContext);
   // On a phone the actions go under the title rather than beside it.
   // Beside it they are `shrink-0`, so three buttons left the title a
@@ -628,7 +752,8 @@ export function PageHeader({ title, subtitle, actions }) {
         <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
       </Button>
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-2xl font-semibold text-foreground">{title}</h1>
+        {eyebrow && <div className="eyebrow">{eyebrow}</div>}
+        <h1 className="truncate font-display text-2xl font-bold text-foreground">{title}</h1>
         {subtitle && <div className="measure mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>}
       </div>
       {/* A filter in the header sizes to itself. The kit's fields are `w-full`

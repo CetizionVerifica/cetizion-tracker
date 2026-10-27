@@ -4,7 +4,7 @@ import { cn } from 'cn';
 
 import { SettingsPane } from '../pages/SettingsArea.jsx';
 import { api } from '../lib/api.js';
-import { useFetch } from '../lib/hooks.js';
+import { invalidateLookups, useFetch } from '../lib/hooks.js';
 import { ago } from '../lib/format.js';
 import { ErrorState, Field, Input, Modal, Select as LegacySelect, useToast } from './ui.jsx';
 import { initialsOf } from './record.jsx';
@@ -22,9 +22,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
  * making sense — and they get a dashed mark and an invitation rather than
  * being dressed up as accounts nobody can use.
  *
- * **Two roles, not four.** C11 proposes Admin, Sales, Finance and
- * Delivery, and says so itself: "the code has two roles". It stays at two
- * here. `users.role` carries `CHECK (role = ANY (ARRAY['admin','sales']))`
+ * **Three roles, not four.** C11 proposes Admin, Sales, Finance and
+ * Delivery, and says so itself: "the code has two roles". HR joined them
+ * for the travel desk (#196, 084), with its own gate on the server
+ * (lib/authz/policy.js, HR_ROUTES). `users.role` carries
+ * `CHECK (role IN ('admin','sales','hr'))`
  * and `requireRole` exists but is mounted nowhere except as
  * `requireAdmin`, so a Finance option would be a control implying a
  * permission model that neither the database nor the routes have. The
@@ -38,10 +40,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'sales', label: 'Sales' },
+  // The travel desk (#196): trips, vendor invoices, the travel import.
+  { value: 'hr', label: 'HR (travel)' },
 ];
 
 const GRID = '@3xl:grid-cols-[minmax(0,1.5fr)_140px_100px_130px_88px]';
-const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const COL_LABEL = 'eyebrow';
 
 /** Server-side field errors, shown against the field that caused them. */
 const fieldErrors = (err) => err?.fields ?? {};
@@ -65,6 +69,8 @@ export function UsersAdmin() {
     setBusy(user.id);
     try {
       await api.users.update(user.id, body);
+      // Who may be picked as an Owner comes from the lookups.
+      invalidateLookups();
       toast(message, 'success');
       refetch();
     } catch (err) {
@@ -91,13 +97,13 @@ export function UsersAdmin() {
         {error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : (
-          <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
               <span>Person</span><span>Role</span><span>Signs in</span><span>Last seen</span><span />
             </div>
 
             {loading && !users.length ? (
-              <div className="skeleton" style={{ height: 120, margin: 18 }} />
+              <div className="skeleton m-[18px] h-[120px]" />
             ) : users.length === 0 ? (
               <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
                 Nobody yet. Add the first one, then switch AUTH_MODE to database.
@@ -123,6 +129,9 @@ export function UsersAdmin() {
                       <div className="text-[12px] break-words text-muted-foreground">
                         {user.email ?? <em>no email — attribution only, from the workbook</em>}
                       </div>
+                      {user.daily_mis === false && user.role !== 'hr' && (
+                        <div className="text-[12px] text-muted-foreground">Exempt from the personal daily MIS</div>
+                      )}
                       {mailboxesOf(user).map((m) => (
                         <div key={m.id} className="text-[12px] break-words text-muted-foreground">
                           Mailbox {m.email}
@@ -180,6 +189,18 @@ export function UsersAdmin() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setResetting(user)}>Set a new password</DropdownMenuItem>
+                          {user.role !== 'hr' && (
+                            <DropdownMenuItem
+                              className="text-[13px]"
+                              onSelect={() => update(
+                                user,
+                                { daily_mis: user.daily_mis === false },
+                                user.daily_mis === false ? `${user.name}'s daily MIS goes to management again` : `${user.name} is exempt from the personal daily MIS`
+                              )}
+                            >
+                              {user.daily_mis === false ? 'Include in the personal daily MIS' : 'Exempt from the personal daily MIS'}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem className="text-[13px]" onSelect={() => toggleActive(user)}>
                             {user.active ? 'Stop them signing in' : 'Let them sign in again'}
                           </DropdownMenuItem>
@@ -255,6 +276,7 @@ function UserForm({ user, minPassword, onClose, onSaved }) {
         await api.users.create({
           name: form.name, email: form.email, role: form.role, password: form.password,
         });
+        invalidateLookups();
         onSaved(`${form.name} can now sign in`);
       } else {
         // Only what changed, so an untouched field is never rewritten.
@@ -264,6 +286,7 @@ function UserForm({ user, minPassword, onClose, onSaved }) {
         if (form.role !== user.role) changes.role = form.role;
         if (Object.keys(changes).length === 0) return onClose();
         await api.users.update(user.id, changes);
+        invalidateLookups();
         onSaved(`${form.name} updated`);
       }
     } catch (err) {

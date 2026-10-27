@@ -14,11 +14,37 @@ import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
+import { mayWriteResource } from '../lib/permissions.js';
 import { date } from '../lib/format.js';
 
 export const CATALOGUES = {
   services: { resource: 'services', label: 'Service', title: 'Service offerings', hint: 'Offered on quotations and PO service lines' },
-  'travel-vendors': { resource: 'travel-vendors', label: 'Travel vendor', title: 'Travel vendors', hint: 'Who trips are booked through' },
+  // The travel desk keeps these two (#196): HR edits them as an admin does.
+  'travel-vendors': {
+    resource: 'travel-vendors', label: 'Travel vendor', title: 'Travel vendors', hr: true,
+    hint: 'Who trips are booked through. The invoice prefixes are how the travel import recognises a vendor\'s bills',
+    extraColumns: [
+      { key: 'gstin', header: 'GSTIN', className: 'mono', render: (r) => r.gstin || '—' },
+      { key: 'invoice_prefixes', header: 'Invoice prefixes', className: 'mono small', render: (r) => (r.invoice_prefixes?.length ? r.invoice_prefixes.join(', ') : '—') },
+      { key: 'payment_terms_days', header: 'Terms', align: 'right', render: (r) => `${r.payment_terms_days} days` },
+    ],
+    extraFields: [
+      { name: 'gstin', label: 'GSTIN' }, { name: 'pan', label: 'PAN' },
+      { name: 'contact_name', label: 'Contact' }, { name: 'email', label: 'Email', type: 'email' }, { name: 'phone', label: 'Phone' },
+      { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number', default: '30' },
+      { name: 'invoice_prefixes', label: 'Invoice number prefixes', hint: 'Comma separated, e.g. HT/2627/, HTT/26-27/', span: 'all' },
+      { name: 'address', label: 'Address', type: 'textarea', span: 'all' },
+    ],
+  },
+  'trip-types': {
+    resource: 'trip-types', label: 'Trip type', title: 'Trip types', hr: true,
+    hint: 'What a trip was for. A chargeable type may be billed to the client; one in use can be hidden but not deleted',
+    extraColumns: [{ key: 'chargeable', header: 'Chargeable', render: (r) => (r.chargeable ? 'Yes' : 'No') }],
+    extraFields: [
+      { name: 'chargeable', label: 'Billable to the client', type: 'boolean', default: 'false' },
+      { name: 'sort_order', label: 'Sort order', type: 'number', default: '0' },
+    ],
+  },
   'expense-categories': { resource: 'expense-categories', label: 'Expense category', title: 'Expense categories', hint: 'What employees can claim against' },
 };
 
@@ -208,11 +234,11 @@ function RateHistoryChart({ rows, currencies }) {
         <p className="small muted">No {currency} rates yet. Add one to see how it has moved.</p>
       ) : (
       <svg viewBox={`0 0 ${width} ${height}`} role="img" className="rate-chart__svg">
-        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke="var(--ink-200)" />
-        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke="var(--ink-200)" />
-        <path d={path} fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke="var(--border)" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke="var(--border)" />
+        <path d={path} fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         {points.map((point, index) => (
-          <circle key={point.id} cx={x(index)} cy={y(Number(point.rate))} r="3.5" fill="var(--white)" stroke="var(--brand-600)" strokeWidth="2">
+          <circle key={point.id} cx={x(index)} cy={y(Number(point.rate))} r="3.5" fill="var(--card)" stroke="var(--primary)" strokeWidth="2">
             <title>{`${point.from_currency}: ₹${point.rate} from ${point.effective_from}`}</title>
           </circle>
         ))}
@@ -285,6 +311,22 @@ const GROUPS = [
     ],
   },
   {
+    title: 'Service questionnaires',
+    hint: 'the form a client fills in before we quote',
+    items: [
+      { key: 'questionnaire_link_days', label: 'A questionnaire link stays open for', unit: 'days' },
+      { key: 'questionnaire_reminder_days', label: 'Remind a client who has not submitted after', unit: 'days' },
+    ],
+  },
+  {
+    title: 'Client portal',
+    hint: 'emails to clients who have the portal switched on',
+    items: [
+      { key: 'portal_notify_new_invoice', label: 'Email portal contacts when an invoice is recorded', type: 'bool' },
+      { key: 'portal_link_in_reminders', label: 'Add the portal address to payment reminders', type: 'bool' },
+    ],
+  },
+  {
     title: 'Follow-ups',
     hint: 'an email to the owner, then to management if nothing is logged; separate from the bell',
     items: [
@@ -302,6 +344,17 @@ const GROUPS = [
       // When Insights counts an open enquiry as at risk.
       { key: 'enquiry_reply_days', label: 'Enquiry at risk with no reply after', unit: 'working days' },
       { key: 'enquiry_decision_warn_days', label: 'Or with no quotation this close to its decision date', unit: 'working days' },
+    ],
+  },
+  {
+    title: 'Sales journey',
+    hint: 'when the Journey board on Pipeline calls a sale slow; stuck after twice this',
+    items: [
+      { key: 'journey_stuck_enquiry_days', label: 'An enquiry is slow after', unit: 'days' },
+      { key: 'journey_stuck_quotation_days', label: 'An open quotation is slow after', unit: 'days' },
+      { key: 'journey_unsent_days', label: 'Nudge a quotation still unsent after', unit: 'days' },
+      { key: 'journey_stuck_po_days', label: 'A PO with nothing invoiced is slow after', unit: 'days' },
+      { key: 'journey_paid_visible_days', quiet: true, label: 'A paid sale stays on the board for', unit: 'days' },
     ],
   },
   {
@@ -409,7 +462,7 @@ export function Assumptions() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
+  if (loading && !data) return <div className="skeleton h-[240px]" />;
 
   return (
     <SettingsPane
@@ -573,10 +626,12 @@ export function Holidays() {
   );
 }
 
-export function Catalogue({ resource, label, title, hint }) {
+export function Catalogue({ resource, label, title, hint, extraColumns = [], extraFields = [] }) {
   // A Settings list: an admin curates it, everybody reads it, because the same
-  // rows fill the dropdowns sales users work in (#85).
-  const { isAdmin } = useAuth();
+  // rows fill the dropdowns sales users work in (#85). The travel desk keeps
+  // the travel lists too (#196).
+  const auth = useAuth();
+  const isAdmin = mayWriteResource(resource, auth.isAdmin, auth.isHr);
   const toast = useToast();
   const { rows, loading, refetch } = useList(resource, {});
   const [editing, setEditing] = useState(null);
@@ -609,6 +664,7 @@ export function Catalogue({ resource, label, title, hint }) {
               { key: 'gst_rate', header: 'GST', align: 'right', render: (r) => `${Number(r.gst_rate)}%` },
               { key: 'sac_code', header: 'SAC', className: 'mono', render: (r) => r.sac_code || '—' },
             ] : []),
+            ...extraColumns,
             { key: 'active', header: 'Status', render: (r) => <Badge tone={r.active ? 'success' : 'neutral'}>{r.active ? 'Active' : 'Hidden'}</Badge> },
             {
               key: 'act',
@@ -621,7 +677,7 @@ export function Catalogue({ resource, label, title, hint }) {
                       in (#85). These resources are adminOnlyWrites on the server. */}
                   {isAdmin && (
                     <>
-                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' ? 'Edit' : 'Rename'}</button>
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' || extraFields.length ? 'Edit' : 'Rename'}</button>
                       <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggle(r)}>
                         {r.active ? 'Hide' : 'Restore'}
                       </button>
@@ -657,6 +713,7 @@ export function Catalogue({ resource, label, title, hint }) {
               { name: 'description', label: 'Default line description', type: 'textarea', span: 'all' },
               { name: 'sort_order', label: 'Sort order', type: 'number', default: '0' },
             ] : []),
+            ...extraFields,
             { name: 'active', label: 'Visible in dropdowns', type: 'boolean', default: 'true' },
           ]}
         />
