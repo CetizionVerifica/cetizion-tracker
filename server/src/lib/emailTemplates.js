@@ -43,16 +43,19 @@ function table(headers, rows) {
 export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3, portalUrl = null }) {
   const total = stages.reduce((n, s) => n + (Number(s.stage_amount) - Number(s.amount_received || 0)), 0);
   const currency = stages[0]?.currency || 'INR';
+  // Export (non-INR) invoices are zero-rated, so only a rupee amount carries GST.
+  const gst = (c) => ((c || 'INR') === 'INR' ? ' incl. GST' : '');
+  const totalGst = stages.every((s) => (s.currency || 'INR') === 'INR') ? ' (incl. GST)' : '';
   const prefix = level >= finalLevel ? 'Final reminder' : level === 2 ? 'Second reminder' : 'Payment reminder';
   const subject = `${prefix}: ${stages.length === 1 ? `invoice ${stages[0].invoice_no}` : `${stages.length} invoices`} due from ${company}`;
-  const lines = stages.map((s) => `- Invoice ${s.invoice_no} (${s.po_number}, ${s.stage_name}): ${inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency)} outstanding, due ${date(s.invoice_due_date)}, ${s.days_overdue} days overdue`);
+  const lines = stages.map((s) => `- Invoice ${s.invoice_no} (${s.po_number}, ${s.stage_name}): ${inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency)} outstanding${gst(s.currency)}, due ${date(s.invoice_due_date)}, ${s.days_overdue} days overdue`);
   const text = `Dear ${contactName || company},
 
 This is a reminder that the following ${stages.length === 1 ? 'invoice is' : 'invoices are'} past due:
 
 ${lines.join('\n')}
 
-Total outstanding: ${inr(total, currency)}
+Total outstanding${totalGst}: ${inr(total, currency)}
 
 If payment has already been made, please share the transaction reference so we can update our records. For any query, reply to this email${financeEmail ? ` or write to ${financeEmail}` : ''}.
 ${portalUrl ? `\n${PORTAL_NOTE.text(portalUrl)}\n` : ''}
@@ -61,8 +64,8 @@ Cetizion Verifica`;
   const html = layout(prefix, `
 <p>Dear ${esc(contactName || company)},</p>
 <p>This is a reminder that the following ${stages.length === 1 ? 'invoice is' : 'invoices are'} past due:</p>
-${table(['Invoice', 'PO / stage', 'Outstanding', 'Due date', 'Overdue'], stages.map((s) => [s.invoice_no, `${s.po_number} · ${s.stage_name}`, inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency), date(s.invoice_due_date), `${s.days_overdue} days`]))}
-<p><strong>Total outstanding: ${esc(inr(total, currency))}</strong></p>
+${table(['Invoice', 'PO / stage', `Outstanding${totalGst}`, 'Due date', 'Overdue'], stages.map((s) => [s.invoice_no, `${s.po_number} · ${s.stage_name}`, inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency), date(s.invoice_due_date), `${s.days_overdue} days`]))}
+<p><strong>Total outstanding${totalGst}: ${esc(inr(total, currency))}</strong></p>
 <p>If payment has already been made, please share the transaction reference so we can update our records.${financeEmail ? ` For any query, reply to this email or write to ${esc(financeEmail)}.` : ''}</p>
 ${portalUrl ? PORTAL_NOTE.html(portalUrl) : ''}
 <p>Thank you,<br>Cetizion Verifica</p>`);
@@ -461,7 +464,7 @@ export function weeklyMis({ data, appUrl = '' }) {
     ['Enquiries', `${data.enquiries.total} (month to date ${data.enquiries.month_to_date})`],
     ['Converted to PO', converted ? `${converted.count} of ${data.outcomes.total} (${converted.pct}%)` : '—'],
     ['POs received', `${data.revenue.total.pos} · ${lakh(data.revenue.total.po_value_inr)}`],
-    ['Invoiced / received this week', `${lakh(data.billing.week.invoiced_inr)} / ${lakh(data.billing.week.received_inr)}`],
+    ['Invoiced / cash received this week', `${lakh(data.billing.week.invoiced_inr)} / ${lakh(data.billing.week.received_inr)}`],
     ['Receivables over 90 days', `${lakh(data.receivables.over_90.amount_inr)} (${data.receivables.over_90.count} invoices)`],
     ['Overdue items', `${data.pending.invoices.overdue + data.pending.pos.overdue + data.pending.quotations.overdue} pending more than ${data.overdue_days} days`],
     ['Open pipeline', `${lakh(data.speed.pipeline.value_inr)} (weighted ${lakh(data.speed.pipeline.weighted_inr)})`],

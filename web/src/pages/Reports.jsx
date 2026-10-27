@@ -340,9 +340,9 @@ function CashChart({ state, horizon, onOpen }) {
   return (
     <ChartCard
       title={`Cash expected, next ${horizon} months`}
-      meta="From stage due dates and the triggers on stages not yet invoiced"
+      meta="From stage due dates and the triggers on stages not yet invoiced; cash received so far, and the rest gross, before TDS"
       height={260}
-      columns={['Month', 'Received', 'Invoiced, due', 'Not yet invoiced', 'Total']}
+      columns={['Month', 'Cash received', 'Invoiced, due', 'Not yet invoiced', 'Total']}
       rows={rows.map((m) => ({
         key: m.month,
         href: `/cashflow?month=${m.month}`,
