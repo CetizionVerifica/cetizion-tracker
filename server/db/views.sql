@@ -69,6 +69,14 @@ RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $
     SELECT CASE WHEN po.currency <> 'INR' THEN 0
                 WHEN q.base > 0 THEN round(q.taxed / q.base, 2)
                 ELSE setting_num('gst_rate_default', 18) END AS r_rate,
+           -- The same rate unrounded, for the arithmetic. Rounding it first
+           -- (16.82 for 18% and 5% lines) took paise off the taxable value;
+           -- unrounded, total / (1 + rate) is exactly what splitting the
+           -- total per rate gives (lib/accounting/stageGst.js), so the
+           -- portal, GSTR-1 and the invoice draft agree to the paisa.
+           CASE WHEN po.currency <> 'INR' THEN 0
+                WHEN q.base > 0 THEN q.taxed / q.base
+                ELSE setting_num('gst_rate_default', 18) END AS r_exact,
            CASE WHEN po.currency <> 'INR' THEN 'export'
                 WHEN q.base > 0 THEN 'quotation'
                 ELSE 'estimated' END AS r_source
@@ -86,7 +94,7 @@ RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $
            round(b_gst * 100 / NULLIF(b_taxable, 0), 2) AS x_rate, 'books'::text AS x_source
       FROM books
     UNION ALL
-    SELECT 2, round(p_total / (1 + r_rate / 100), 2), p_total - round(p_total / (1 + r_rate / 100), 2), r_rate, r_source
+    SELECT 2, round(p_total / (1 + r_exact / 100), 2), p_total - round(p_total / (1 + r_exact / 100), 2), r_rate, r_source
       FROM rate
   ) x ORDER BY pref LIMIT 1;
 $$ LANGUAGE sql STABLE;
