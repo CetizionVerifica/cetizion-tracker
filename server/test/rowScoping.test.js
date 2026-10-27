@@ -1184,6 +1184,8 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
 
       // The admin reaches all of them.
       assert.equal((await get(admin.cookie, `/api/quotations/${q(theirs.quotation)}/full`)).status, 200);
+      // An open one: a won or lost quotation is refused whoever records it (lib/quotationReady.js).
+      await db.query(`UPDATE quotations SET status = 'Submitted' WHERE quotation_no = $1`, [nobody.quotation]);
       assert.equal((await post(admin.cookie, `/api/quotations/${q(nobody.quotation)}/accept`, { accepted_by_name: 'Riya' })).status, 200);
     });
 
