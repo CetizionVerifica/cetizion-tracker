@@ -13,7 +13,6 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
-import { mergeMessage } from '../lib/companyMerge.js';
 import { recordPath } from '../lib/journey.js';
 
 /**
@@ -89,8 +88,7 @@ export default function CompanyDetail() {
     setBusy(true);
     try {
       const { data: r } = await api.action(`/companies/${id}/merge`, { into });
-      // The route says what it moved; a merge cannot be undone, so say it (#103).
-      toast(mergeMessage(`${r.merged} merged into ${r.into}`, r.moved), 'success');
+      toast(`${r.merged} merged into ${r.into}`, 'success');
       invalidateLookups();
       navigate(`/companies/${into}`);
     } catch (err) { toast(err.message, 'danger'); setBusy(false); }
