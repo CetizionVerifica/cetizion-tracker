@@ -14,7 +14,7 @@ BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices, v_travel_invoice_lines, v_travel_segments,
-  v_employee_expense_claims, v_company_document_profiles CASCADE;
+  v_employee_expense_claims, v_company_document_profiles, v_questionnaire_responses, v_sales_journey CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
 -- breaks a view the way a broken cell reference would.
@@ -56,6 +56,14 @@ RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $
     SELECT CASE WHEN po.currency <> 'INR' THEN 0
                 WHEN q.base > 0 THEN round(q.taxed / q.base, 2)
                 ELSE setting_num('gst_rate_default', 18) END AS r_rate,
+           -- The same rate unrounded, for the arithmetic. Rounding it first
+           -- (16.82 for 18% and 5% lines) took paise off the taxable value;
+           -- unrounded, total / (1 + rate) is exactly what splitting the
+           -- total per rate gives (lib/accounting/stageGst.js), so the
+           -- portal, GSTR-1 and the invoice draft agree to the paisa.
+           CASE WHEN po.currency <> 'INR' THEN 0
+                WHEN q.base > 0 THEN q.taxed / q.base
+                ELSE setting_num('gst_rate_default', 18) END AS r_exact,
            CASE WHEN po.currency <> 'INR' THEN 'export'
                 WHEN q.base > 0 THEN 'quotation'
                 ELSE 'estimated' END AS r_source
@@ -73,7 +81,7 @@ RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $
            round(b_gst * 100 / NULLIF(b_taxable, 0), 2) AS x_rate, 'books'::text AS x_source
       FROM books
     UNION ALL
-    SELECT 2, round(p_total / (1 + r_rate / 100), 2), p_total - round(p_total / (1 + r_rate / 100), 2), r_rate, r_source
+    SELECT 2, round(p_total / (1 + r_exact / 100), 2), p_total - round(p_total / (1 + r_exact / 100), 2), r_rate, r_source
       FROM rate
   ) x ORDER BY pref LIMIT 1;
 $$ LANGUAGE sql STABLE;
@@ -837,6 +845,14 @@ SELECT
   q.accepted_at,
   q.accepted_by_name,
   (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count,
+  -- Generated from a questionnaire's answers (#208 phase 2): computed here, never stored.
+  q.questionnaire_response_id,
+  q.generated_at,
+  (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id AND ql.price_needed) AS price_needed_count,
+  -- Each generated line against its own creation: a later service's generation does not hide an earlier edit (D12).
+  (q.generated_at IS NOT NULL AND EXISTS (
+     SELECT 1 FROM quotation_lines ql
+      WHERE ql.quotation_id = q.id AND ql.generated AND ql.updated_at > ql.created_at)) AS edited_since_generated,
   q.stage_id,
   st.name                                     AS stage,
   st.type                                     AS stage_type,
@@ -1082,14 +1098,224 @@ CREATE VIEW v_enquiries AS
 SELECT
   e.*,
   ct.email AS contact_email,
-  ct.phone AS contact_phone
+  ct.phone AS contact_phone,
+  -- The latest questionnaire sent for it (#208), for the list's column.
+  qr.id AS questionnaire_response_id,
+  qr.status AS questionnaire_status
 FROM enquiries e
-LEFT JOIN contacts ct ON ct.id = e.contact_id;
+LEFT JOIN contacts ct ON ct.id = e.contact_id
+LEFT JOIN LATERAL (
+  SELECT r.id, r.status FROM questionnaire_responses r
+   WHERE r.enquiry_id = e.id AND r.status <> 'withdrawn'
+   ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+) qr ON true;
+
+-- A questionnaire response with its form and the state of its links
+-- (#208): whether a link is open, opened, expired or revoked is worked
+-- out here from the links, never stored.
+CREATE VIEW v_questionnaire_responses AS
+SELECT
+  r.*,
+  q.id AS questionnaire_id, q.name AS questionnaire_name, s.id AS service_id, s.name AS service_name,
+  v.version, jsonb_array_length(COALESCE(v.definition->'steps', '[]'::jsonb)) AS step_count,
+  e.enquiry_no, COALESCE(co.name, e.client_name) AS client_name,
+  ls.open_links, ls.expires_at, ls.first_opened_at, ls.last_opened_at, ls.last_sent_at, ls.last_sent_to, ls.reminders,
+  CASE WHEN ls.link_count = 0 THEN 'none'
+       WHEN ls.open_links > 0 AND ls.first_opened_at IS NOT NULL THEN 'opened'
+       WHEN ls.open_links > 0 THEN 'sent'
+       WHEN ls.revoked_links = ls.link_count THEN 'revoked'
+       ELSE 'expired' END AS link_state
+FROM questionnaire_responses r
+JOIN questionnaire_versions v ON v.id = r.version_id
+JOIN questionnaires q ON q.id = v.questionnaire_id
+JOIN services s ON s.id = q.service_id
+LEFT JOIN enquiries e ON e.id = r.enquiry_id
+LEFT JOIN companies co ON co.id = COALESCE(r.company_id, e.company_id)
+CROSS JOIN LATERAL (
+  SELECT count(*) AS link_count,
+         count(*) FILTER (WHERE l.revoked_at IS NULL AND l.expires_at > now()) AS open_links,
+         count(*) FILTER (WHERE l.revoked_at IS NOT NULL) AS revoked_links,
+         max(l.expires_at) FILTER (WHERE l.revoked_at IS NULL) AS expires_at,
+         min(l.first_opened_at) AS first_opened_at, max(l.last_opened_at) AS last_opened_at,
+         max(l.created_at) FILTER (WHERE l.sent_to IS NOT NULL) AS last_sent_at,
+         (array_agg(l.sent_to ORDER BY l.created_at DESC) FILTER (WHERE l.sent_to IS NOT NULL))[1] AS last_sent_to,
+         COALESCE(max(l.reminder_count), 0) AS reminders
+    FROM questionnaire_links l WHERE l.response_id = r.id
+) ls;
 
 -- Client document notes with the client's name, for Settings (081).
 CREATE VIEW v_company_document_profiles AS
 SELECT p.*, c.name AS company_name, (p.approved_at IS NOT NULL) AS approved
 FROM company_document_profiles p
 JOIN companies c ON c.id = p.company_id;
+
+-- ---------------------------------------------------------------------
+-- The sales journey (docs/specs/sales-journey): one row per sale, from
+-- its enquiry to its last paid PO stage, holding facts only. Which step a
+-- sale is on, how long it has been there and what to do next are worked
+-- out on read by lib/journey/steps.js, so no step is ever stored.
+--
+-- A sale is anchored on the first of these that exists:
+--   q-<id>   every quotation, with its enquiry and its live POs
+--   e-<id>   an enquiry nothing has been quoted for yet
+--   p-<id>   a live PO that belongs to no quotation
+-- A cancelled PO will not go ahead and a replaced one has a revision
+-- standing in for it, so neither is part of any sale.
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_sales_journey AS
+WITH live_po AS (
+  SELECT v.* FROM v_purchase_orders v
+   WHERE NOT v.cancelled AND v.replaced_by_po_number IS NULL
+),
+-- The quotation each live PO belongs to, decided once here so that a PO is
+-- never in two sales: the one it names; else the quotation on its project,
+-- the won one first, then the newest; else none, and it is a sale of its own.
+po_link AS (
+  SELECT p.*, COALESCE(qn.id, qp.id) AS link_quotation_id
+    FROM live_po p
+    LEFT JOIN quotations qn ON qn.quotation_no = p.quotation_no
+    LEFT JOIN LATERAL (
+      SELECT q.id FROM quotations q
+       WHERE p.quotation_no IS NULL AND q.project_id = p.project_id
+       ORDER BY (q.status = 'Won - PO Received') DESC, q.id DESC
+       LIMIT 1
+    ) qp ON true
+),
+-- What a PO's stages say that v_purchase_orders does not already carry.
+po_stages AS (
+  SELECT s.po_number,
+         -- Billable once the stage's trigger has happened, unless it is held.
+         COUNT(*) FILTER (WHERE s.stage_status <> 'Not Due' AND NOT s.on_hold) AS billable_stages,
+         COALESCE(SUM(s.due_now_amount) FILTER (WHERE s.stage_status = 'Overdue'), 0) AS overdue_amount,
+         MAX(s.payment_received_date) AS last_paid_on,
+         MIN(s.invoice_due_date) FILTER (WHERE s.stage_status <> 'Paid') AS next_stage_due
+    FROM v_payment_stages s
+   GROUP BY s.po_number
+),
+pos AS (
+  SELECT CASE WHEN l.link_quotation_id IS NOT NULL THEN 'q-' || l.link_quotation_id ELSE 'p-' || l.id END AS journey_key,
+         COUNT(*)::int AS po_count,
+         array_agg(l.po_number ORDER BY l.po_date NULLS LAST, l.id) AS po_numbers,
+         (array_agg(l.id ORDER BY l.po_date NULLS LAST, l.id))[1] AS first_po_id,
+         (array_agg(l.po_number ORDER BY l.po_date NULLS LAST, l.id))[1] AS first_po_number,
+         (array_agg(l.project_id ORDER BY l.po_date NULLS LAST, l.id))[1] AS first_project_id,
+         MIN(l.po_date) AS first_po_date,
+         MIN(l.created_at) AS first_po_created_at,
+         -- One currency or no total, as v_projects does: rupees added to
+         -- euros are not a value, and calling the sum either would be wrong.
+         CASE WHEN COUNT(DISTINCT l.currency) = 1 THEN SUM(l.po_value) END AS po_value_total,
+         CASE WHEN COUNT(DISTINCT l.currency) = 1 THEN MIN(l.currency) END AS po_currency,
+         COUNT(*) FILTER (WHERE l.stage_count = 0)::int AS pos_without_stages,
+         SUM(l.stage_count)::int AS stage_count,
+         SUM(l.total_invoiced) AS invoiced_total,
+         SUM(l.total_received) AS received_total,
+         SUM(l.stages_to_invoice)::int AS stages_to_invoice,
+         SUM(l.overdue_stages)::int AS overdue_stages,
+         COALESCE(SUM(s.overdue_amount), 0) AS overdue_amount,
+         COALESCE(SUM(s.billable_stages), 0)::int AS billable_stages,
+         bool_and(l.payment_status = 'Fully Paid') AS fully_paid,
+         MAX(s.last_paid_on) AS last_paid_on,
+         MIN(s.next_stage_due) AS next_stage_due,
+         bool_and(l.actual_delivery_date IS NOT NULL) AS delivered,
+         -- Whoever owns the project a PO sits under reaches the sale (spec D7).
+         COALESCE(array_agg(DISTINCT pr.owner_user_id) FILTER (WHERE pr.owner_user_id IS NOT NULL), '{}') AS project_owner_ids
+    FROM po_link l
+    JOIN projects pr ON pr.project_id = l.project_id
+    LEFT JOIN po_stages s ON s.po_number = l.po_number
+   GROUP BY 1
+),
+anchors AS (
+  SELECT 'q-' || q.id AS journey_key, 'quotation' AS anchor, q.id AS quotation_id, e.id AS enquiry_id
+    FROM quotations q
+    LEFT JOIN LATERAL (
+      SELECT x.id FROM enquiries x
+       WHERE x.quotation_no = q.quotation_no
+       ORDER BY x.enquiry_date NULLS LAST, x.id
+       LIMIT 1
+    ) e ON true
+  UNION ALL
+  SELECT 'e-' || e.id, 'enquiry', NULL, e.id FROM enquiries e WHERE e.quotation_no IS NULL
+  UNION ALL
+  SELECT 'p-' || l.id, 'po', NULL, NULL FROM po_link l WHERE l.link_quotation_id IS NULL
+)
+SELECT
+  a.journey_key,
+  a.anchor,
+  COALESCE(q.client_name, e.client_name, pr.client_name)            AS client_name,
+  COALESCE(q.company_id, e.company_id, pr.company_id)               AS company_id,
+  COALESCE(q.sales_person, e.sales_person, pr.sales_person)         AS sales_person,
+  COALESCE(q.service_quoted, e.service, pr.primary_service)         AS service,
+  e.owner_user_id                                                   AS enquiry_owner_id,
+  q.owner_user_id                                                   AS quotation_owner_id,
+  -- Whoever owns a project the sale sits on (spec D7): the project of each
+  -- live PO, and the sale's own project, which a won quotation reaches
+  -- before its first PO is registered.
+  ARRAY(SELECT DISTINCT o FROM unnest(COALESCE(p.project_owner_ids, '{}') || pr.owner_user_id) AS o
+         WHERE o IS NOT NULL ORDER BY o)                            AS project_owner_ids,
+  e.id                                                              AS enquiry_id,
+  e.enquiry_no,
+  -- The enquiry's own owner, for its step; sales_person above is the sale's.
+  e.sales_person                                                    AS enquiry_sales_person,
+  e.enquiry_date,
+  e.created_at                                                      AS enquiry_created_at,
+  e.status                                                          AS enquiry_status,
+  e.first_responded_at                                              AS enquiry_first_responded_at,
+  e.last_contacted_at                                               AS enquiry_last_contacted_at,
+  e.estimated_value                                                 AS enquiry_estimated_value,
+  e.currency                                                        AS enquiry_currency,
+  COALESCE(ls.name, e.source)                                       AS enquiry_source,
+  ur.name                                                           AS enquiry_unqualified_reason,
+  q.id                                                              AS quotation_id,
+  q.quotation_no,
+  q.quotation_date,
+  q.created_at                                                      AS quotation_created_at,
+  q.status                                                          AS quotation_status,
+  -- The priced total once it has lines; until then the figure typed in.
+  CASE WHEN q.line_count > 0 THEN COALESCE(q.total, q.quotation_value) ELSE q.quotation_value END AS quotation_value,
+  q.currency                                                        AS quotation_currency,
+  q.line_count,
+  q.price_needed_count,
+  q.sent_at,
+  q.accepted_at,
+  q.closed_at,
+  q.stage,
+  q.stage_type,
+  q.approval_status,
+  q.expired,
+  q.lost_reason,
+  q.expected_close_date,
+  -- The quotation's project, or the project of the sale's first PO.
+  COALESCE(q.project_id, p.first_project_id)                        AS project_id,
+  COALESCE(p.po_count, 0)                                           AS po_count,
+  COALESCE(p.po_numbers, '{}')                                      AS po_numbers,
+  p.first_po_id,
+  p.first_po_number,
+  p.first_po_date,
+  p.first_po_created_at,
+  p.po_value_total,
+  p.po_currency,
+  COALESCE(p.pos_without_stages, 0)                                 AS pos_without_stages,
+  COALESCE(p.stage_count, 0)                                        AS stage_count,
+  COALESCE(p.invoiced_total, 0)                                     AS invoiced_total,
+  COALESCE(p.received_total, 0)                                     AS received_total,
+  COALESCE(p.stages_to_invoice, 0)                                  AS stages_to_invoice,
+  COALESCE(p.overdue_stages, 0)                                     AS overdue_stages,
+  COALESCE(p.overdue_amount, 0)                                     AS overdue_amount,
+  COALESCE(p.billable_stages, 0)                                    AS billable_stages,
+  COALESCE(p.fully_paid, false)                                     AS fully_paid,
+  p.last_paid_on,
+  p.next_stage_due,
+  -- When the sale began is worked out in lib/journey/steps.js (startedOn)
+  -- from the dates above: a timestamp's day is the business day it fell on,
+  -- which a cast here would read in the database's time zone instead.
+  COALESCE(p.delivered, false)                                      AS delivered
+FROM anchors a
+LEFT JOIN v_quotations q ON q.id = a.quotation_id
+LEFT JOIN enquiries e ON e.id = a.enquiry_id
+LEFT JOIN lead_sources ls ON ls.id = e.source_id
+LEFT JOIN lost_reasons ur ON ur.id = e.unqualified_reason_id
+LEFT JOIN pos p ON p.journey_key = a.journey_key
+LEFT JOIN projects pr ON pr.project_id = COALESCE(q.project_id, p.first_project_id);
 
 COMMIT;

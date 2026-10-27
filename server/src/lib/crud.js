@@ -8,6 +8,9 @@ import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
 import { nameKey, normalizeName } from './names.ts';
+import { actorFrom } from './activity.js';
+import { actAs, logCrudCreate, logCrudUpdate } from './recordActs.js';
+import { assignOwnerFromSalesperson } from './salespersonOwner.js';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
 
@@ -477,7 +480,13 @@ export function crudRouter(name, def) {
   // onSave(client, { before, after, input }) hook writes, a document attached under
   // lock, and a reference number taken from its series commit together with
   // the record or not at all.
-  const write = (fn) => (def.onSave || def.hasDocument || def.autoId ? transaction(fn) : fn({ query }));
+  //
+  // A resource that declares `audit` writes who did it (recordActs.js) in the
+  // same transaction, and every transaction tells the database who is acting,
+  // for the triggers that stamp a completed task and a stage move.
+  const write = (req, fn) => (def.onSave || def.hasDocument || def.autoId || def.audit
+    ? transaction(async (client) => { await actAs(client, req.user); return fn(client); })
+    : fn({ query }));
 
   router.get('/', async (req, res) => {
     const params = [];
@@ -545,13 +554,19 @@ export function crudRouter(name, def) {
       }
     }
 
-    const { id, extra } = await write(async (client) => {
+    const { id, extra } = await write(req, async (client) => {
       // A row that inherits its ownership may only be filed under a parent
       // this request can reach. It stays here, in front of the shared
       // writer, rather than inside it: the check is about who is asking,
       // and insertRecord is also called by MCP, which has no such caller.
       await assertParentReachable(client, def, values, scopeOf(req), input);
       const written = await insertRecord(client, def, { values, input, scope: scopeOf(req) });
+      await logCrudCreate(client, req.user, def, written.row);
+      // An admin's record goes to the salesperson they named on it, when
+      // that names a sales user exactly; otherwise it stays unowned.
+      if (isUnrestricted(req.user)) {
+        await assignOwnerFromSalesperson(client, def, written.row, { actor: actorFrom(req.user) });
+      }
       return { id: written.row.id, extra: written.extra };
     });
 
@@ -595,7 +610,7 @@ export function crudRouter(name, def) {
       }
     }
 
-    const { id, extra, replacedDocument } = await write(async (client) => {
+    const { id, extra, replacedDocument } = await write(req, async (client) => {
       // Re-pointing a row at another parent is a write into that parent's
       // record — a task moved onto somebody else's quotation appears on
       // their timeline. The UPDATE below carries the predicate for where the
@@ -618,7 +633,7 @@ export function crudRouter(name, def) {
       if (!cols.length && !linksOnly) throw new ApiError(422, 'Nothing to update');
 
       let before = null;
-      if (def.onSave) {
+      if (def.onSave || def.audit) {
         const keyParams = [];
         const keyPred = scopedIdPredicate(def, req.params.id, keyParams, scopeOf(req), def.table);
         ({ rows: [before] } = await client.query(
@@ -644,6 +659,12 @@ export function crudRouter(name, def) {
       }
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
       const extra = await def.onSave?.(client, { before, after: rows[0], input, scope: scopeOf(req) });
+      await logCrudUpdate(client, req.user, def, before, rows[0], cols);
+      // A sales user cannot hand a record away by retyping its salesperson;
+      // only an admin's change of salesperson moves the owner.
+      if (isUnrestricted(req.user)) {
+        await assignOwnerFromSalesperson(client, def, rows[0], { fields: cols, actor: actorFrom(req.user) });
+      }
       return { id: rows[0].id, extra, replacedDocument };
     });
 

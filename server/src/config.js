@@ -89,6 +89,11 @@ export const config = {
     pass: process.env.SMTP_PASS || '',
     from: process.env.EMAIL_FROM || '',
     replyTo: process.env.EMAIL_REPLY_TO || '',
+    // Other addresses the SMTP relay may send as (comma-separated), for a
+    // report's Send As address. EMAIL_FROM is always allowed. A relay
+    // refuses, or spam-filters, a From its domain has not authorised, so
+    // the app can choose only among these.
+    fromAllowed: (process.env.EMAIL_FROM_ALLOWED || '').split(',').map((s) => s.trim()).filter(Boolean),
     bcc: process.env.EMAIL_BCC || '',
     allowlist: (process.env.EMAIL_ALLOWLIST || '').split(',').map((s) => s.trim()).filter(Boolean),
   },

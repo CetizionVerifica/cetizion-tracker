@@ -61,7 +61,7 @@ export default function Account() {
     return (
       <>
         <PageHeader title="My account" />
-        <div className="page"><div className="skeleton" style={{ height: 240 }} /></div>
+        <div className="page"><div className="skeleton h-[240px]" /></div>
       </>
     );
   }
@@ -80,13 +80,13 @@ export default function Account() {
         {/* Who you are signed in as, once, at the top — rather than a
             sentence in the middle of a form. */}
         <div className="flex flex-wrap items-center gap-4">
-          <Avatar className="size-12 shrink-0 rounded-[10px]">
-            <AvatarFallback className="rounded-[10px] bg-secondary text-[15px] font-semibold text-primary">
+          <Avatar className="size-12 shrink-0 rounded-lg">
+            <AvatarFallback className="rounded-lg bg-secondary text-[15px] font-semibold text-primary">
               {initialsOf(profile.name)}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <div className="truncate text-[18px] font-semibold tracking-[-0.015em] text-foreground">{profile.name}</div>
+            <div className="truncate font-display text-lg font-bold text-foreground">{profile.name}</div>
             <div className="truncate text-[13px] text-secondary-text">{profile.email}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -26,6 +26,7 @@ import { ApiError } from '../middleware/error.js';
 import { acceptBooks, applyBookPayments, log, parseBooksFile, reconcile, saveEntries } from '../lib/accounting/books.js';
 import { draftForStage, tallyConfigured, tallyPush, tallyVoucherXml, zohoConfigured, zohoCreateDraft, zohoPull } from '../lib/accounting/providers.js';
 import { checkGstin, fyQuarter, gstDate } from '../lib/accounting/gst.js';
+import { RATE_MIX_SQL, defaultGstRate, stageGst } from '../lib/accounting/stageGst.js';
 
 export const accountingRouter = Router();
 
@@ -206,31 +207,27 @@ async function tdsRows(from, to) {
 async function salesRows(from, to) {
   const { rows } = await query(
     `SELECT s.id, s.invoice_no, s.invoice_date, s.stage_amount, s.currency, c.name AS client, c.gstin, q.place_of_supply_state, q.id AS quotation_id,
-            (SELECT json_agg(m) FROM (SELECT COALESCE(gst_rate, 0) AS rate, SUM(amount) AS amount FROM quotation_lines
-                                         WHERE quotation_id = q.id AND amount > 0 GROUP BY COALESCE(gst_rate, 0)) m) AS rate_mix
+            ${RATE_MIX_SQL} AS rate_mix
        FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects pr ON pr.project_id = po.project_id
        LEFT JOIN companies c ON c.id = pr.company_id LEFT JOIN quotations q ON q.quotation_no = po.quotation_no
       WHERE s.invoice_no IS NOT NULL AND s.invoice_date BETWEEN $1 AND $2 ORDER BY s.invoice_date, s.invoice_no`, [from, to]);
-  const defaultRate = Number(await setting('gst_rate_default', '18'));
+  const defaultRate = await defaultGstRate();
   return rows.map((r) => {
     const g = checkGstin(r.gstin);
-    const taxable = Number(r.stage_amount);
+    // The stage amount is what the client was billed, GST included (a share
+    // of the PO value, the quotation's total). That is the invoice value;
+    // the taxable value is what is left once its GST is taken out.
+    //
     // One line per GST rate on the quotation, not one line at the average of
     // them. An invoice for 100,000 at 18% and 10,000 at 5% is two lines; a
     // single line at 16.82% is a rate that does not exist and the GST
-    // offline tool rejects it. The stage is split in the proportions the
-    // quotation used, with the rounding paisa on the last line.
-    const mix = (r.rate_mix || []).map((m) => ({ rate: Number(m.rate), amount: Number(m.amount) })).filter((m) => m.amount > 0).sort((x, y) => y.amount - x.amount);
-    const base = mix.reduce((n, m) => n + m.amount, 0);
-    const parts = mix.length && base > 0
-      ? mix.map((m) => ({ rate: m.rate, taxable: Math.round(taxable * (m.amount / base) * 100) / 100 }))
-      : [{ rate: defaultRate, taxable }];
-    const gap = Math.round((taxable - parts.reduce((n, p) => n + p.taxable, 0)) * 100) / 100;
-    parts[parts.length - 1].taxable = Math.round((parts[parts.length - 1].taxable + gap) * 100) / 100;
-    const invoiceValue = Math.round(parts.reduce((n, p) => n + p.taxable * (100 + p.rate) / 100, 0) * 100) / 100;
+    // offline tool rejects it. The amount is split back in the proportions
+    // the quotation's lines made it from (stageGst.js), to the paisa.
+    const split = stageGst(r, defaultRate);
     return {
       ...r, gstin_valid: g.valid, state_code: g.valid ? g.state_code : (r.place_of_supply_state || '').match(/^\d{2}/)?.[0] || null,
-      parts, rate: parts.length === 1 ? parts[0].rate : null, taxable, invoice_value: invoiceValue,
+      parts: split.parts.map((p) => ({ rate: p.rate, taxable: p.taxable })), rate: split.rate, taxable: split.taxable,
+      invoice_value: Math.round(Number(r.stage_amount) * 100) / 100,
     };
   });
 }

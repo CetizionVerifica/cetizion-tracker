@@ -17,13 +17,14 @@ import { runPoBackfills } from './lib/mailbox/autoPurchaseOrder.js';
 import { runInvoiceBackfills } from './lib/mailbox/autoInvoice.js';
 import { runReviewDigest } from './lib/mailbox/reviewDigest.js';
 import { runVisitReminders } from './lib/visits.js';
-import { runDailyBriefing, runWeeklyMis } from './lib/misSend.js';
+import { isFinalAttempt, runDailyBriefing, runPersonalDaily, runWeeklyMis } from './lib/misSend.js';
 import { runWebhooks } from './lib/webhooks.js';
 import { runAccountingSync } from './routes/accounting.js';
 import { runOpsWatch, raiseAlert } from './lib/ops/alerts.js';
 import { jobRuns } from './lib/ops/metrics.js';
 import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
 import './lib/aiUsage.js'; // each day's AI calls and spend, for the auto-entry panel
+import { runQuestionnaireReminders } from './lib/questionnaires.js';
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
@@ -48,6 +49,12 @@ async function expireQuotations() {
 }
 
 export const JOBS = {
+  'questionnaires.remind': {
+    description: 'Remind clients who have not submitted a service questionnaire, after the days in Settings, at most twice, never after the link expires',
+    cron: '30 10 * * *',
+    run: (opts) => runQuestionnaireReminders(opts),
+    quiet: (result) => !result?.reminded?.length,
+  },
   'quotations.expire': {
     description: 'Mark quotations sent from the tracker as lost (expired) once their validity has passed by the grace period',
     cron: '15 8 * * *',
@@ -123,14 +130,28 @@ export const JOBS = {
   // The scheduled sales reports (docs/mis-reports-plan.md §3.7). Each
   // period is sent once: a run that finds it already sent does nothing.
   'reports.daily_briefing': {
-    description: 'Email management the Daily Sales Briefing for the previous day, from the sales mailbox with the PDF attached',
+    description: 'Email management the Daily Sales Briefing for the previous day, from the chosen sender with the PDF attached',
     cron: '56 8 * * *',
     run: (opts) => runDailyBriefing(opts),
   },
   'reports.weekly_mis': {
-    description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the sales mailbox with the PDF attached',
+    description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the chosen sender with the PDF attached',
     cron: '54 8 * * 1',
     run: (opts) => runWeeklyMis(opts),
+  },
+  // Each person's daily MIS (mis-report-sender-plan.md §B5), before the
+  // briefing so it can say whose went. Tuesday to Saturday, for Monday to
+  // Friday. A report the AI could not write is tried again at 09:10 and
+  // 09:40; what still fails at 09:40 is not sent, and admins are told.
+  'reports.personal_daily': {
+    description: 'Email management each person\'s daily MIS for the previous working day, written by AI, from their own mailbox',
+    cron: '40 8 * * 2-6',
+    run: (opts) => runPersonalDaily({ startedBy: opts?.startedBy || 'schedule' }),
+  },
+  'reports.personal_daily_retry': {
+    description: 'Try again the personal daily MIS reports that could not be written or sent at 08:40; the 09:40 try is the last',
+    cron: '10,40 9 * * 2-6',
+    run: (opts) => runPersonalDaily({ startedBy: opts?.startedBy || 'schedule', final: isFinalAttempt() }),
   },
   'deliverables.daily': {
     description: 'Mark expired certificates and deliverables; remind owners before expiry with a task',

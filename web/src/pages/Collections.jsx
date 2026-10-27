@@ -68,25 +68,26 @@ export default function Collections() {
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {stageId && <FollowUpBanner entity="payment_stage" id={stageId} version={chased} logLabel="Log a chase" onLog={target ? () => setChase({ stage: target.stage }) : undefined} />}
         {d && (
-          <div className="auto-grid--stats">
-            <Stat label="Outstanding (INR)" value={money(d.totals.outstanding)} />
-            <Stat label="Overdue" value={money(d.totals.overdue)} tone={d.totals.overdue > 0 ? 'danger' : ''} />
-            {d.buckets.map((b) => <Stat key={b.key} label={b.label} value={money(d.totals.buckets[b.key])} tone={b.key === '90+' && d.totals.buckets[b.key] > 0 ? 'danger' : ''} />)}
-            <Stat label="Promised" value={money(d.totals.promised)} meta="pay-by dates given" />
-            <Stat label="On hold" value={money(d.totals.on_hold)} meta="disputes" />
+          <>
+            <div className="auto-grid--stats">
+              <Stat label="Outstanding (INR)" value={money(d.totals.outstanding)} />
+              <Stat label="Overdue" value={money(d.totals.overdue)} tone={d.totals.overdue > 0 ? 'danger' : ''} />
+              <Stat label="Promised" value={money(d.totals.promised)} meta="pay-by dates given" />
+              <Stat label="On hold" value={money(d.totals.on_hold)} meta="disputes" />
+            </div>
+            <Ageing buckets={d.buckets} totals={d.totals} active={bucket} />
             {d.foreign?.length > 0 && (
-              <Stat
-                label="Not in these totals"
-                value={`${d.foreign.length} invoice${d.foreign.length === 1 ? '' : 's'}`}
-                meta={[...new Set(d.foreign.map((f) => f.currency))].join(', ')}
-                tone="warn"
-              />
+              <Alert tone="warning">
+                <span>
+                  {d.foreign.length} invoice{d.foreign.length === 1 ? ' is' : 's are'} in {[...new Set(d.foreign.map((f) => f.currency))].join(', ')} and left out of these rupee totals. They still show under their client below.
+                </span>
+              </Alert>
             )}
-          </div>
+          </>
         )}
         <PortalAnswers onPaid={refetch} />
         <Card flush title="By client" hint="Click a client for its invoices. Oldest overdue first.">
-          {loading && !d ? <div className="skeleton" style={{ height: 120, margin: 18 }} />
+          {loading && !d ? <div className="skeleton m-4 h-[120px]" />
             /* Same reason as Payables: an empty list after a failed load
                is not the same fact as nothing being owed. */
             : error ? null : !d?.clients.length ? <Empty title="Nothing outstanding" text="Every invoiced stage is paid." /> : (
@@ -97,7 +98,7 @@ export default function Collections() {
               columns={[
                 { key: 'company', header: 'Client', className: 'strong', render: (r) => <>{r.company_id ? <Link to={`/companies/${r.company_id}`} onClick={(e) => e.stopPropagation()}>{r.company}</Link> : r.company}{r.contact_name && <div className="small muted">{r.contact_name}{r.contact_email ? ` · ${r.contact_email}` : ''}{r.contact_phone ? ` · ${r.contact_phone}` : ''}</div>}</> },
                 { key: 'outstanding', header: 'Outstanding', align: 'right', render: (r) => money(r.outstanding) },
-                { key: 'overdue', header: 'Overdue', align: 'right', render: (r) => (r.overdue > 0 ? <span style={{ color: 'var(--danger-fg)' }}>{money(r.overdue)}</span> : <span className="muted">—</span>) },
+                { key: 'overdue', header: 'Overdue', align: 'right', render: (r) => (r.overdue > 0 ? <span className="text-late">{money(r.overdue)}</span> : <span className="muted">—</span>) },
                 ...d.buckets.map((b) => ({ key: b.key, header: b.label, align: 'right', render: (r) => (r.buckets[b.key] > 0 ? money(r.buckets[b.key]) : <span className="muted">—</span>) })),
                 { key: 'oldest', header: 'Oldest', align: 'right', render: (r) => (r.oldest_days > 0 ? `${r.oldest_days} d` : '—') },
                 { key: 'chased', header: 'Last chased', render: (r) => (r.last_chased_at ? new Date(r.last_chased_at).toLocaleDateString() : <span className="muted">never</span>) },
@@ -114,10 +115,10 @@ export default function Collections() {
               columns={[
                 { key: 'invoice_no', header: 'Invoice', className: 'mono', render: (s) => <>{s.invoice_no}<div className="small muted">{date(s.invoice_date)} · <Link to={`/purchase-orders/${encodeURIComponent(s.po_number)}`}>{s.po_number}</Link> · {s.stage_name}</div></> },
                 { key: 'outstanding', header: 'Outstanding', align: 'right', render: (s) => <>{money(s.outstanding, s.currency)}<div className="small muted">of {money(s.stage_amount, s.currency)}</div></> },
-                { key: 'due', header: 'Due', render: (s) => <>{date(s.invoice_due_date)}{s.days_overdue > 0 && <div className="small" style={{ color: 'var(--danger-fg)' }}>{s.days_overdue} days overdue · {s.bucket}</div>}</> },
+                { key: 'due', header: 'Due', render: (s) => <>{date(s.invoice_due_date)}{s.days_overdue > 0 && <div className="small text-late">{s.days_overdue} days overdue · {s.bucket}</div>}</> },
                 { key: 'status', header: 'Status', render: (s) => <><Badge>{s.stage_status}</Badge>{s.on_hold && <div><Badge tone="warning">on hold</Badge> <span className="small muted">{s.hold_reason}</span></div>}{s.promise_to_pay_date && <div className="small">promised {date(s.promise_to_pay_date)}</div>}{s.reminder_level > 0 && <div className="small muted">reminder level {s.reminder_level}{s.reminder_sent_on ? ` on ${date(s.reminder_sent_on)}` : ''}</div>}<ClientSaidBadge said={clientSaid.get(s.id)} /></> },
                 { key: 'last', header: 'Last chase', className: 'wrap small', render: (s) => (s.last_chased_at ? <>{new Date(s.last_chased_at).toLocaleDateString()} · {s.last_channel}<div className="muted">{s.last_summary}</div>{s.next_action_on && <div>next: {date(s.next_action_on)}</div>}</> : <span className="muted">never</span>) },
-                { key: 'act', header: '', align: 'right', render: (s) => <div className="table__actions"><button type="button" className="btn btn--sm btn--primary" onClick={() => setPaying(s)}>Payment</button><button type="button" className="btn btn--sm" onClick={() => setChase({ stage: s })}>Chase</button>{isAdmin && (s.on_hold ? <button type="button" className="btn btn--sm btn--ghost" onClick={() => lift(s)}>Lift hold</button> : <button type="button" className="btn btn--sm btn--ghost" onClick={() => setHold(s)}>Hold</button>)}<button type="button" className="btn btn--sm btn--ghost" onClick={() => setLogFor(s)}>Log</button></div> },
+                { key: 'act', header: '', align: 'right', render: (s) => <div className="table__actions"><button type="button" className="btn btn--sm" onClick={() => setPaying(s)}>Record payment</button><button type="button" className="btn btn--sm" onClick={() => setChase({ stage: s })}>Chase</button>{isAdmin && (s.on_hold ? <button type="button" className="btn btn--sm btn--ghost" onClick={() => lift(s)}>Lift hold</button> : <button type="button" className="btn btn--sm btn--ghost" onClick={() => setHold(s)}>Hold</button>)}<button type="button" className="btn btn--sm btn--ghost" onClick={() => setLogFor(s)}>Log</button></div> },
               ]}
             />
           </Card>
@@ -129,6 +130,47 @@ export default function Collections() {
       {paying && <RecordPaymentDialog stage={paying} onClose={() => setPaying(null)} onDone={() => { setPaying(null); refetch(); }} />}
       {logFor && <LogDialog stage={logFor} onClose={() => setLogFor(null)} />}
     </>
+  );
+}
+
+/**
+ * How old the money is, as one bar: each band's share of what is owed, in
+ * a tone that darkens with age, and each band a link that narrows the list
+ * below to it (the same ?bucket= the Reports chart links with).
+ */
+// The same colours as the ageing chart in Reports (components/charts.jsx AGE_COLOUR).
+const AGE_TONE = { 'not-due': 'bg-forecast', '1-30': 'bg-waiting', '31-60': 'bg-waiting', '61-90': 'bg-late', '90+': 'bg-late' };
+
+function Ageing({ buckets, totals, active }) {
+  const sum = buckets.reduce((n, b) => n + Number(totals.buckets[b.key] || 0), 0);
+  if (!sum) return null;
+  return (
+    <section aria-label="Ageing" className="rounded-lg border border-border bg-card p-5">
+      <div className="flex items-baseline gap-3">
+        <h2 className="font-display text-base font-bold text-foreground">How old it is</h2>
+        <span className="text-[12.5px] text-muted-foreground">Pick a band to see only those invoices</span>
+      </div>
+      <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
+        {buckets.map((b) => {
+          const v = Number(totals.buckets[b.key] || 0);
+          return v > 0 ? <span key={b.key} className={AGE_TONE[b.key] || 'bg-forecast'} style={{ width: `${(v / sum) * 100}%` }} /> : null;
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {buckets.map((b) => (
+          <Link
+            key={b.key}
+            to={active === b.key ? '/collections' : `/collections?bucket=${encodeURIComponent(b.key)}`}
+            aria-current={active === b.key ? 'true' : undefined}
+            className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12.5px] no-underline transition-colors duration-150 ${active === b.key ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-secondary-text hover:bg-secondary'}`}
+          >
+            <span className={`size-2.5 rounded-[2px] ${AGE_TONE[b.key] || 'bg-forecast'}`} aria-hidden="true" />
+            {b.label}
+            <span className="num font-semibold text-foreground">{money(totals.buckets[b.key], 'INR', { compact: true })}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -175,12 +217,12 @@ function LogDialog({ stage, onClose }) {
     <Modal title={`${stage.invoice_no}: history`} subtitle={`${stage.client_name} · ${stage.po_number} · ${stage.stage_name}`} onClose={onClose} size="lg" footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
       <div className="stack">
         <div>
-          <div className="strong" style={{ marginBottom: 6 }}>Receipts</div>
+          <div className="strong mb-1.5">Receipts</div>
           {(pays.data?.data ?? []).length ? <table className="table"><tbody>{pays.data.data.map((p) => <tr key={p.id}><td>{date(p.received_on)}</td><td>{p.mode.replace('_', ' ')}{p.reference ? ` · ${p.reference}` : ''}</td><td className="num">{money(p.amount, stage.currency)}{Number(p.tds_amount) > 0 && <div className="small muted">+ TDS {money(p.tds_amount, stage.currency)}</div>}</td></tr>)}</tbody></table> : <span className="muted small">None yet</span>}
         </div>
         <div>
-          <div className="strong" style={{ marginBottom: 6 }}>Chasing log</div>
-          {(log.data?.data ?? []).length ? <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{log.data.data.map((l) => <li key={l.id}>{new Date(l.happened_at).toLocaleString()} · {l.channel}{l.by_whom ? ` · ${l.by_whom}` : ''}: {l.summary}{l.promise_to_pay_date ? ` (promised ${date(l.promise_to_pay_date)})` : ''}</li>)}</ul> : <span className="muted small">Nothing logged</span>}
+          <div className="strong mb-1.5">Chasing log</div>
+          {(log.data?.data ?? []).length ? <ul className="small m-0 pl-[18px]">{log.data.data.map((l) => <li key={l.id}>{new Date(l.happened_at).toLocaleString()} · {l.channel}{l.by_whom ? ` · ${l.by_whom}` : ''}: {l.summary}{l.promise_to_pay_date ? ` (promised ${date(l.promise_to_pay_date)})` : ''}</li>)}</ul> : <span className="muted small">Nothing logged</span>}
         </div>
       </div>
     </Modal>

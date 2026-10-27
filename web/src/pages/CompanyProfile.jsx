@@ -76,9 +76,9 @@ const FIELDS = [
 /** The PDF header, as quotationPdf.js actually lays it out. */
 function PdfHeader({ values }) {
   return (
-    <div className="flex flex-col gap-4 rounded-[10px] bg-white p-6 text-[#151517]">
+    <div className="flex flex-col gap-4 rounded-lg bg-white p-6 text-[#151517]">
       <div>
-        <div className="text-[16px] font-bold text-[#0f7a66]">{values.company_name || 'Cetizion Verifica'}</div>
+        <div className="text-[16px] font-bold text-[#0f7a66]">{values.company_name || 'Your company name'}</div>
         {values.company_address && <div className="mt-1 text-[8.5px]/[1.5] text-[#5d5d66]">{values.company_address}</div>}
         {values.company_gstin && <div className="text-[8.5px] text-[#5d5d66]">GSTIN {values.company_gstin}</div>}
       </div>
@@ -87,7 +87,7 @@ function PdfHeader({ values }) {
         <span>22 Sep 2026</span>
       </div>
       <div className="border-t border-[#e2e2de] pt-3 text-[11px]/[1.6] text-[#5d5d66]">
-        For {values.company_name || 'Cetizion Verifica'} · authorised signatory
+        For {values.company_name || 'your company'} · authorised signatory
       </div>
     </div>
   );
@@ -122,7 +122,7 @@ export function CompanyProfile() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
+  if (loading && !data) return <div className="skeleton h-[240px]" />;
 
   return (
     <SettingsPane
@@ -131,7 +131,7 @@ export function CompanyProfile() {
     >
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="flex min-w-0 flex-col gap-5">
-        <div className="grid gap-x-6 gap-y-4 rounded-[10px] border border-border bg-card p-5 sm:grid-cols-2">
+        <div className="grid gap-x-6 gap-y-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2">
           {FIELDS.map((field) => (
             <div key={field.key} className={cn('min-w-0', field.span && 'sm:col-span-2')}>
               <Label htmlFor={field.key} className="mb-2 text-[12.5px] font-medium text-secondary-text">{field.label}</Label>
@@ -170,7 +170,7 @@ export function CompanyProfile() {
       </div>
 
       <div className="flex flex-col gap-3">
-        <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">PDF header, live</div>
+        <div className="eyebrow">PDF header, live</div>
         <PdfHeader values={values} />
         <p className="text-[11.5px]/[1.6] text-muted-foreground">
           The numbering series — <span className="mono">CTZ/QT/2026/…</span>, <span className="mono">PRJ-2026-…</span>,

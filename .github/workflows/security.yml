@@ -1,6 +1,7 @@
 # Supply-chain and code scanning (#37). Runs on every pull request, every
 # push to main, and once a week so a vulnerability published after the last
-# change is still noticed.
+# change is still noticed. A pull request fails the dependency audit only for
+# an advisory it adds; main and the weekly run fail for any.
 name: Security
 on:
   pull_request:
@@ -17,17 +18,41 @@ jobs:
     name: Known vulnerabilities in dependencies
     runs-on: ubuntu-latest
     strategy:
+      # Each folder reports for itself: one failing must not cancel the other.
+      fail-fast: false
       matrix:
         dir: [server, web]
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # On main and the weekly run: any high or critical advisory fails, so
+      # one published since the last change is noticed. Moderate and below
+      # are reported only.
       - name: Audit ${{ matrix.dir }}
+        if: github.event_name != 'pull_request'
         working-directory: ${{ matrix.dir }}
-        # High and critical fail the check; moderate and below are reported only.
         run: npm audit --omit=dev --audit-level=high
+      # On a pull request: only an advisory the pull request adds fails. One
+      # published against a package main already has shows as a warning; it
+      # is not the pull request's doing, and Dependabot's security update
+      # fixes it (scripts/ci/new-advisories.mjs).
+      - name: Audit ${{ matrix.dir }} (what this pull request adds)
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ matrix.dir }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="$RUNNER_TEMP/base"
+          mkdir -p "$base"
+          git show "$BASE_SHA:${{ matrix.dir }}/package.json" > "$base/package.json"
+          git show "$BASE_SHA:${{ matrix.dir }}/package-lock.json" > "$base/package-lock.json"
+          (cd "$base" && npm audit --omit=dev --json > "$RUNNER_TEMP/base-audit.json") || true
+          npm audit --omit=dev --json > "$RUNNER_TEMP/head-audit.json" || true
+          node ../scripts/ci/new-advisories.mjs "$RUNNER_TEMP/base-audit.json" "$RUNNER_TEMP/head-audit.json"
   codeql:
     name: Code scanning (CodeQL)
     # Code scanning on a private repository needs GitHub Advanced Security.
@@ -63,8 +88,14 @@ jobs:
       # The whole image is scanned. npm used to be skipped here because its
       # bundled packages trail upstream fixes; it is no longer in the image
       # at all, so there is nothing to skip.
+      # On a pull request, the operating system's packages only: the app's
+      # npm packages in the image are the dependency audit's, which fails a
+      # pull request only for an advisory it adds. Main and the weekly run
+      # scan everything.
       - name: Scan the image
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
           aquasec/trivy:latest image --exit-code 1 --ignore-unfixed
-          --severity CRITICAL,HIGH --no-progress cetizion-tracker:scan
+          --severity CRITICAL,HIGH --no-progress
+          ${{ github.event_name == 'pull_request' && '--pkg-types os' || '' }}
+          cetizion-tracker:scan

@@ -6,6 +6,7 @@
 import XLSX from 'xlsx';
 import { query, transaction } from '../../db.js';
 import { normaliseNumber } from './gst.js';
+import { RATE_MIX_SQL, defaultGstRate, stageGst } from './stageGst.js';
 
 // Column names used by Zoho Books and Tally exports, and common hand-made sheets.
 const COLUMNS = {
@@ -128,8 +129,11 @@ const near = (a, b, tol = 1) => a != null && b != null && Math.abs(Number(a) - N
  */
 export async function reconcile({ by = 'system' } = {}) {
   const { rows: stages } = await query(
-    `SELECT s.id, s.invoice_no, s.invoice_date, s.invoice_due_date, s.stage_amount, s.amount_received, s.currency, s.client_name, s.po_number, s.stage_name
-       FROM v_payment_stages s WHERE s.invoice_no IS NOT NULL`);
+    `SELECT s.id, s.invoice_no, s.invoice_date, s.invoice_due_date, s.stage_amount, s.amount_received, s.currency, s.client_name, s.po_number, s.stage_name,
+            ${RATE_MIX_SQL} AS rate_mix
+       FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number
+      WHERE s.invoice_no IS NOT NULL`);
+  const defaultRate = await defaultGstRate();
   const { rows: invoices } = await query(`SELECT * FROM books_entries WHERE kind = 'invoice'`);
   const { rows: payments } = await query(`SELECT p.*, s.invoice_no FROM payments p JOIN payment_stages s ON s.id = p.stage_id`);
   const { rows: bookPayments } = await query(`SELECT * FROM books_entries WHERE kind = 'payment'`);
@@ -141,10 +145,21 @@ export async function reconcile({ by = 'system' } = {}) {
     if (!b) { items.push({ kind: 'invoice', match_key: `inv:${normaliseNumber(s.invoice_no)}`, stage_id: s.id, status: 'missing_in_books', differences: [] }); continue; }
     byNumber.delete(normaliseNumber(s.invoice_no));
     const diffs = [];
-    // The tracker's stage amount is before GST; compare with the taxable value, else the total less tax.
-    const booksTaxable = b.taxable_amount ?? (b.total_amount != null && b.tax_amount != null ? Number(b.total_amount) - Number(b.tax_amount) : null);
-    if (booksTaxable != null && !near(booksTaxable, s.stage_amount)) diffs.push({ field: 'amount', tracker: Number(s.stage_amount), books: Number(booksTaxable) });
-    if (booksTaxable == null && b.total_amount != null && !near(b.total_amount, s.stage_amount) && !near(Number(b.total_amount) / 1.18, s.stage_amount, 2)) diffs.push({ field: 'amount', tracker: Number(s.stage_amount), books: Number(b.total_amount), note: 'books total, tax not given' });
+    // The tracker's stage amount INCLUDES GST: it is the invoice total. The
+    // books' total is compared with it; given no total, their taxable value
+    // plus their tax is the total. Only a bare taxable value is compared with
+    // the stage's taxable part, taken out at the quotation's own rates
+    // (stageGst.js). Comparing totals is what catches GST charged at the
+    // wrong rate, which a taxable-only comparison would miss.
+    const booksTotal = b.total_amount ?? (b.taxable_amount != null && b.tax_amount != null ? Number(b.taxable_amount) + Number(b.tax_amount) : null);
+    if (booksTotal != null) {
+      if (!near(booksTotal, s.stage_amount)) {
+        diffs.push({ field: 'amount', tracker: Number(s.stage_amount), books: Math.round(Number(booksTotal) * 100) / 100, ...(b.total_amount == null ? { note: 'books taxable value plus tax' } : {}) });
+      }
+    } else if (b.taxable_amount != null) {
+      const { taxable } = stageGst(s, defaultRate);
+      if (!near(b.taxable_amount, taxable)) diffs.push({ field: 'amount', tracker: taxable, books: Number(b.taxable_amount), note: 'taxable value; the books gave no total' });
+    }
     if (b.entry_date && s.invoice_date && String(b.entry_date) !== String(s.invoice_date)) diffs.push({ field: 'invoice_date', tracker: s.invoice_date, books: b.entry_date });
     if (b.due_date && s.invoice_due_date && String(b.due_date) !== String(s.invoice_due_date)) diffs.push({ field: 'due_date', tracker: s.invoice_due_date, books: b.due_date });
     if (b.currency && s.currency && b.currency !== s.currency) diffs.push({ field: 'currency', tracker: s.currency, books: b.currency });

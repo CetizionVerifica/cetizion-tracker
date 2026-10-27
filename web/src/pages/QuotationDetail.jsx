@@ -5,7 +5,9 @@ import { PageHeader } from '../App.jsx';
 import {
   Alert, ConfirmDialog, DocumentLink, Empty, ErrorState, Field, Input, Modal, Select, Textarea, useToast,
 } from '../components/ui.jsx';
-import { Chip, flowSteps, initialsOf, RecordFlow, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { Chip, initialsOf, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { JourneyRail } from '../components/journey/JourneyRail.jsx';
+import { recordPath } from '../lib/journey.js';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
@@ -15,6 +17,7 @@ import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { AcceptanceLinks } from '../components/AcceptanceLinks.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { QuotationAnswers } from '../components/serviceQuotes/QuotationAnswers.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -32,18 +35,16 @@ import { quotationFields } from './Quotations.jsx';
  * where the deal is, and one button that moves it on. The rest are in the
  * menu, and the small print under the button names them so nobody hunts.
  *
- * The ladder is INFERRED, not recorded. The app keeps only the live
- * pipeline stage and `stage_changed_at`, so there is no history to read a
- * deal's path from. Every rung is therefore derived from a fact that is
- * actually stored — an enquiry row, `sent_at`, a purchase order, money
- * invoiced, money received. The design's second rung is "Qualified", but
- * nothing here records qualification, so this one says "Quoted", which is
- * true of every quotation that has a priced line.
+ * The rail is the sale's journey, Enquiry → Quotation → PO, the same one
+ * the order and the project draw (docs/specs/sales-journey). The server
+ * reads every step off a stored fact; this page no longer works out a
+ * ladder of its own. What it still decides is the sentence and the button
+ * under the rail, because those are about this quotation, not the sale.
  */
 
 const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
-const FACT_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const FACT_LABEL = 'eyebrow';
 
 const trim = (n) => String(Math.round(Number(n) * 100) / 100);
 
@@ -76,12 +77,25 @@ function statusTone(status, expired) {
   return 'info';
 }
 
+/**
+ * Whether the journey says this quotation's enquiry does not open for the
+ * viewer (server §6). Only a journey about this quotation and this very
+ * enquiry says so; until one arrives, the link stays.
+ */
+function enquiryClosed(journey, q) {
+  if (journey?.records?.quotation_no !== q.quotation_no) return false;
+  const step = journey.steps?.find((s) => s.key === 'enquiry');
+  return step?.record?.no === q.enquiry?.enquiry_no && step.reachable === false;
+}
+
 export default function QuotationDetail() {
   const { key } = useParams();
   const { isAdmin } = useAuth();
   const toast = useToast();
   const lookups = useLookups();
   const [editing, setEditing] = useState(false);
+  // The journey the rail loaded: whether the enquiry opens for this viewer.
+  const [journey, setJourney] = useState(null);
   const [line, setLine] = useState(null);         // 'new' | line record
   const [removing, setRemoving] = useState(null);
   const [revising, setRevising] = useState(false);
@@ -113,28 +127,20 @@ export default function QuotationDetail() {
   }
 
   if (error) return <><PageHeader title="Quotation" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !q) return <><PageHeader title="Quotation" /><div className="page"><div className="skeleton" style={{ height: 240 }} /></div></>;
+  if (loading || !q) return <><PageHeader title="Quotation" /><div className="page"><div className="skeleton h-[240px]" /></div></>;
 
   const cur = q.currency;
   const open = ['Draft', 'Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);
   const won = q.status === 'Won - PO Received';
   const approvalBlocked = q.approval_status === 'pending' || q.approval_status === 'rejected';
+  // Lines a pricing rule could not price (#208): the server refuses to send until each has a rate; the count is its own.
+  const priceNeeded = Number(q.price_needed_count) || 0;
+  const priceNeededText = `${priceNeeded} line${priceNeeded === 1 ? ' needs' : 's need'} a price before this can go to the client`;
   const total = q.line_count ? q.total : q.quotation_value;
 
   const invoiced = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_invoiced || 0), 0);
   const received = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_received || 0), 0);
   const ordered = q.purchase_orders.reduce((sum, p) => sum + Number(p.po_value || 0), 0);
-
-  // Six facts the database actually holds, in the order they happen.
-  const reached = [
-    { label: 'Enquiry', done: Boolean(q.enquiry) },
-    { label: 'Quoted', done: q.line_count > 0 || Number(q.quotation_value) > 0 },
-    { label: 'Sent', done: Boolean(q.sent_at) },
-    { label: 'Won, PO in', done: q.purchase_orders.length > 0 },
-    { label: 'Invoiced', done: invoiced > 0 },
-    { label: 'Collected', done: ordered > 0 && received >= ordered - 0.5 },
-  ];
-  const steps = flowSteps(reached);
 
   function verdict() {
     if (q.approval_status === 'pending') {
@@ -143,6 +149,7 @@ export default function QuotationDetail() {
     if (q.approval_status === 'rejected') {
       return `The discount was rejected${q.approved_by ? ` by ${q.approved_by}` : ''}${q.approval_note ? `: ${q.approval_note}` : ''}. Revise the discount or the terms, then ask again.`;
     }
+    if (priceNeeded && open) return `${priceNeededText}. Enter the rate on each line marked Price needed.`;
     // Once an order exists the deal has moved past the quotation, so what
     // happened to the money is the headline. Asking `!sent_at` first told
     // a won, invoiced deal that it had not been sent yet, which is true
@@ -193,7 +200,8 @@ export default function QuotationDetail() {
   function primary() {
     if (!move) return null;
     const { label, onClick } = MOVES[move];
-    return <Button size="sm" className={FLOW_BUTTON} disabled={busy} onClick={onClick}>{label}</Button>;
+    const held = move === 'send' && priceNeeded > 0;
+    return <Button size="sm" className={FLOW_BUTTON} disabled={busy || held} onClick={onClick}>{label}</Button>;
   }
 
   function secondary() {
@@ -208,8 +216,9 @@ export default function QuotationDetail() {
   function note() {
     const rest = 'Everything else this deal can do is in the ⋯ menu.';
     if (move === 'register') {
-      return `Registering asks for the PO number, value, terms and the payment split, then creates ${q.project_id || 'the project'}, its onboarding tasks and the payment stages. Send, Client accepted, Revise and Ask approval are in the ⋯ menu.`;
+      return `Registering asks for the PO number, value, terms and the payment split, then creates ${q.project_id || 'the project'}, its onboarding tasks and the payment stages. ${priceNeeded ? 'Client accepted' : 'Send, Client accepted'}, Revise and Ask approval are in the ⋯ menu.`;
     }
+    if (move === 'send' && priceNeeded) return `${priceNeededText}. ${rest}`;
     if (move === 'send') return `Sending marks it as sent and can email the PDF to ${q.contact?.email || 'the client'}. ${rest}`;
     if (move === 'project') return `Creating the project opens it with its onboarding tasks, without a purchase order. ${rest}`;
     return rest;
@@ -224,7 +233,7 @@ export default function QuotationDetail() {
         mark={false}
         facts={[
           <span className="inline-flex min-w-0 items-center gap-2 text-foreground">
-            <span className="grid size-5 shrink-0 place-items-center rounded-[5px] bg-secondary text-[9px] font-semibold text-settled">
+            <span className="grid size-5 shrink-0 place-items-center rounded-sm bg-secondary text-[9px] font-semibold text-settled">
               {initialsOf(q.client_name)}
             </span>
             {q.company_id
@@ -244,7 +253,7 @@ export default function QuotationDetail() {
         menu={
           <>
             <RecordMenuItem onSelect={() => setEditing(true)}>Edit the quotation</RecordMenuItem>
-            {open && !approvalBlocked && <RecordMenuItem onSelect={() => setSending(true)}>Send to the client</RecordMenuItem>}
+            {open && !approvalBlocked && !priceNeeded && <RecordMenuItem onSelect={() => setSending(true)}>Send to the client</RecordMenuItem>}
             {open && !q.accepted_at && <RecordMenuItem onSelect={() => setAccepting(true)}>Record client acceptance</RecordMenuItem>}
             {!won && <RecordMenuItem onSelect={() => setRevising(true)}>Revise</RecordMenuItem>}
             {open && q.approval_status !== 'pending' && <RecordMenuItem onSelect={() => setRequesting(true)}>Ask for approval</RecordMenuItem>}
@@ -253,11 +262,15 @@ export default function QuotationDetail() {
           </>
         }
         flow={
-          <RecordFlow
-            steps={steps}
+          // The quotation is a new object each time the page loads it, so
+          // the rail reloads with it after every action taken here.
+          <JourneyRail
+            of={{ quotation: q.quotation_no }}
             verdict={verdict()}
             actions={<>{primary()}{secondary()}</>}
             note={note()}
+            refreshKey={q}
+            onJourney={setJourney}
           />
         }
       >
@@ -275,6 +288,19 @@ export default function QuotationDetail() {
           </Alert>
         )}
         <EmailOrigin entity="quotation" id={q.quotation_no} />
+
+        {/* Generated from questionnaire answers (#208): when, whether edited since, and what still needs a price. */}
+        {q.generated_at && (
+          <Alert tone="info">
+            <span>
+              Generated from the questionnaire answers{q.generated_from?.length > 1 ? ` (${q.generated_from.map((g) => g.service_name).join(', ')})` : ''} on {date(q.generated_at)}
+              {q.edited_since_generated ? '; edited since' : ''}.
+            </span>
+          </Alert>
+        )}
+        {priceNeeded > 0 && open && (
+          <Alert tone="warning"><span><strong>{priceNeededText}.</strong> Enter the rate on each line marked Price needed; Send and the acceptance link wait until then.</span></Alert>
+        )}
 
         {q.approval_status === 'approved' && (
           <Alert tone="success">
@@ -314,9 +340,21 @@ export default function QuotationDetail() {
                       {l.service_name && l.service_name !== l.description && (
                         <div className="text-[12px] text-muted-foreground">{l.service_name}</div>
                       )}
+                      {l.price_needed && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted-foreground">
+                          <Chip tone="waiting">Price needed</Chip>
+                          {l.price_needed_reason && <span>{l.price_needed_reason}</span>}
+                          {/* On a phone the rate column is off to the side of the scrolling table: the way to fix it sits here too. */}
+                          {!won && <Button variant="link" size="sm" className="h-auto p-0 text-[12px] sm:hidden" onClick={() => setLine(l)}>Enter rate</Button>}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">{Number(l.qty)} {l.unit || ''}</TableCell>
-                    <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">{money(l.rate, cur)}</TableCell>
+                    <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">
+                      {l.price_needed
+                        ? (won ? <span className="text-muted-foreground">—</span> : <><span className="text-muted-foreground sm:hidden">—</span><Button variant="link" size="sm" className="hidden h-auto p-0 text-[13px] sm:inline-flex" onClick={() => setLine(l)}>Enter rate</Button></>)
+                        : money(l.rate, cur)}
+                    </TableCell>
                     <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">
                       {Number(l.discount_percent) ? `${Number(l.discount_percent)}%` : <span className="text-muted-foreground">—</span>}
                     </TableCell>
@@ -345,7 +383,7 @@ export default function QuotationDetail() {
           )}
         </RecordSection>
 
-        <Card className="gap-0 rounded-[10px] border-border py-0 shadow-none">
+        <Card className="gap-0 rounded-lg border-border py-0 shadow-none">
           <CardContent className="grid grid-cols-2 gap-5 p-5 sm:grid-cols-4">
             <GridFact label="Contact">
               {q.contact ? (
@@ -370,7 +408,9 @@ export default function QuotationDetail() {
             </GridFact>
             <GridFact label="Enquiry">
               {q.enquiry
-                ? <Link className="mono" to={`/enquiries?q=${encodeURIComponent(q.enquiry.enquiry_no)}`}>{q.enquiry.enquiry_no}</Link>
+                ? enquiryClosed(journey, q)
+                  ? <span className="mono">{q.enquiry.enquiry_no}</span>
+                  : <Link className="mono" to={recordPath('enquiry', q.enquiry.enquiry_no)}>{q.enquiry.enquiry_no}</Link>
                 : <span className="text-muted-foreground">—</span>}
             </GridFact>
             <GridFact label="Project">
@@ -426,7 +466,12 @@ export default function QuotationDetail() {
           </RecordSection>
         )}
 
-        <AcceptanceLinks quotation={q} canSend={open && !approvalBlocked && !q.accepted_at} onChanged={refetch} />
+        {q.generated_from?.length > 0 && (
+          <RecordSection title="Answers" hint="What the client told us, that the generated lines were priced from">
+            <QuotationAnswers generatedFrom={q.generated_from} />
+          </RecordSection>
+        )}
+        <AcceptanceLinks quotation={q} canSend={open && !approvalBlocked && !priceNeeded && !q.accepted_at} onChanged={refetch} />
         <Timeline entity="quotation" id={q.quotation_no} />
       </RecordPage>
 

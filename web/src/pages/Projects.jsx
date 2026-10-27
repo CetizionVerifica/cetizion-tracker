@@ -5,6 +5,7 @@ import { useFetch } from '../lib/hooks.js';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Progress } from '../components/ui.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
 import { money, date, number } from '../lib/format.js';
 
 const projectAmount = (row, value) =>
@@ -42,7 +43,7 @@ export default function Projects() {
     { name: 'primary_service', label: 'Primary service', type: 'combo', options: lookups.services, span: 2 },
     { name: 'project_manager', label: 'Project manager' },
     { name: 'project_manager_email', label: 'Manager email', type: 'email' },
-    { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
+    { name: 'sales_person', label: 'Sales person', type: 'select', options: ownerOptions(lookups), hint: OWNER_HINT },
     {
       name: 'quotation_no',
       label: 'Won quotation',
@@ -67,6 +68,9 @@ export default function Projects() {
       title="Projects"
       subtitle="Every registered project, with its POs, stages and money rolled up"
       resource="projects"
+      // The date picker filters ?from=&to= on planned_start_date: when the project is planned to begin.
+      dateFilterLabel="Start date"
+      dateRange
       columns={columns}
       fields={fields}
       newLabel="Project"

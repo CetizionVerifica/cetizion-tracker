@@ -9,7 +9,9 @@ import {
 } from '@/components/ui/select.tsx';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
-import { useFetch, useLookups } from '../lib/hooks.js';
+import { useFetch, useLookups, useRowsThatFit } from '../lib/hooks.js';
+import { OWNER_HINT, ownerNamed, ownerOptions } from '../lib/owners.js';
+import { keepPlace } from '../lib/pageFit.js';
 import { useAuth } from '../lib/auth.jsx';
 // The pieces of a mail client (docs/inbox-outlook-plan.md §3.7), each its
 // own component so this page stops growing: the message view with its
@@ -17,8 +19,10 @@ import { useAuth } from '../lib/auth.jsx';
 // the rows of a folder; the pane a folder's conversation is read in.
 import { Message, when } from '../components/mail/MessageView.jsx';
 import { MailboxSwitcher } from '../components/mail/MailboxSwitcher.jsx';
-import { MessageRow, Pager, initials, since } from '../components/mail/MessageList.jsx';
+import { MESSAGE_ROW_H, MessageRow, Pager, PagerSpace, initials, since } from '../components/mail/MessageList.jsx';
 import { ReadingPane } from '../components/mail/ReadingPane.jsx';
+import { AttachmentNames } from '../components/mail/AttachmentStrip.jsx';
+import { recordPath } from '../lib/journey.js';
 
 /**
  * The shared sales inbox (#30): who owns each email, what is waiting on
@@ -37,8 +41,6 @@ const VIEWS = [
   { key: 'closed', label: 'Done' },
 ];
 
-/** Conversations per page; the server's default too. */
-const PAGE_SIZE = 50;
 /** How often the open page asks the server to pull mail, and re-reads what it has. */
 const SYNC_EVERY_MS = 60_000;
 const REFRESH_EVERY_MS = 20_000;
@@ -53,7 +55,7 @@ function Tag({ tone = 'plain', mono = false, children }) {
   };
   return (
     <span className={cn(
-      'inline-flex h-5 items-center rounded-[6px] border px-2 text-[11px] font-semibold',
+      'inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-full border px-2 text-[11px] font-semibold',
       mono && 'num font-medium', tones[tone]
     )}>
       {children}
@@ -89,6 +91,14 @@ function stateTag(row) {
   return null;
 }
 
+/**
+ * How tall a team-inbox row is, in px, whatever it holds (#250); see
+ * MESSAGE_ROW_H for why it is fixed.
+ *
+ * 14 + 20 name + 20 subject + 39 snippet + 30 chips/attachments + 14 + 1 border.
+ */
+const THREAD_ROW_H = 138;
+
 const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref) {
   // An option in a listbox rather than a button, so a screen reader says
   // "2 of 4, selected" and the arrow keys mean what they look like they
@@ -106,8 +116,9 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
           onSelect(row);
         }
       }}
+      style={{ height: THREAD_ROW_H }}
       className={cn(
-        'flex w-full cursor-pointer gap-3 border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
+        'flex w-full cursor-pointer gap-3 overflow-hidden border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
         selected ? 'border-l-2 border-l-primary bg-card' : 'border-l-2 border-l-transparent hover:bg-card'
       )}
     >
@@ -118,23 +129,23 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
         {initials(row.from_name || row.company_name, row.from_email)}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
+        <span className="flex h-5 items-center gap-2">
           {/* Nobody has opened it yet. A dot rather than bolding the row:
               weight would reflow the line the moment somebody read it, and
               the name is already semibold on every row. It sits in a fixed
               gutter so a read row lines up with an unread one. */}
-          <span className="flex w-2 shrink-0 items-center self-center" aria-hidden="true">
+          <span className="flex w-2 shrink-0 items-center" aria-hidden="true">
             {row.unread && <span className="size-1.5 rounded-full bg-primary" />}
           </span>
           <span
-            className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
+            className="min-w-0 flex-1 truncate text-[13px]/5 font-semibold text-foreground"
             title={[row.company_name, row.from_name, row.from_email].filter(Boolean).join(' · ')}
           >
             {row.company_name || row.from_name || row.from_email}
             {row.company_name && row.from_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
           {row.has_attachments && (
-            <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
+            <Paperclip className="size-3 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
           )}
           {/* Overdue is carried by the timestamp, not by a chip of its own.
               It is a fact about *when*, and on a quiet week every thread in
@@ -142,7 +153,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
               timestamps say the same thing without displacing the chips
               that differ from row to row. */}
           <span
-            className={cn('shrink-0 text-[11.5px]', row.overdue ? 'font-medium text-late' : 'text-muted-foreground')}
+            className={cn('shrink-0 text-[11.5px]/5', row.overdue ? 'font-medium text-late' : 'text-muted-foreground')}
             title={row.overdue ? 'Nobody has replied to this yet' : undefined}
           >
             {since(row.last_message_at)}
@@ -152,7 +163,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             are scanning for, and a clipped one with no way to read it is
             worse than a wrapped one. */}
         <span className={cn(
-          'mt-0.5 block truncate text-[12.5px]',
+          'mt-0.5 block h-[18px] truncate text-[12.5px]/[18px]',
           row.unread ? 'font-medium text-foreground' : 'text-secondary-text'
         )} title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
@@ -165,18 +176,19 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             email is rarely a sentence.
 
             A mailbox set to metadata-only stores no snippet, so the band
-            simply does not appear for it rather than showing a blank line. */}
-        {row.snippet && (
-          <span className="mt-1 block line-clamp-2 text-[12px]/[1.45] text-muted-foreground">
-            {row.snippet}
-          </span>
-        )}
+            is left empty for it. Empty rather than gone: every row is the
+            same height, so the page can hold exactly what fits (#250). */}
+        <span className="mt-1 block h-[35px] line-clamp-2 text-[12px]/[17.5px] text-muted-foreground">
+          {row.snippet}
+        </span>
         {/* Two chips at most: what this thread is, and whose it is. The
             row had up to six, all the same size, so the one that differed
-            between rows was the hardest to find. */}
-        <span className="mt-1.5 flex flex-wrap gap-1.5">
+            between rows was the hardest to find. The attachment names
+            follow on the same line rather than adding one of their own. */}
+        <span className="mt-1.5 flex h-6 min-w-0 items-center gap-1.5 overflow-hidden">
           {stateTag(row)}
           {row.assignee ? <Tag>{row.assignee}</Tag> : <Tag>no owner</Tag>}
+          <AttachmentNames names={row.attachment_names} className="mt-0 min-w-0 flex-1 flex-nowrap overflow-hidden" />
         </span>
       </span>
     </div>
@@ -209,10 +221,16 @@ export default function Inbox() {
   // counts, for the switcher. Re-read with the list, so the counts move.
   const mailboxes = useFetch(() => api.raw('/mail/mailboxes'), []);
   const boxes = mailboxes.data?.data ?? [];
+  /**
+   * One screen of conversations a page (#250): as many rows as the list has
+   * room for, so it never scrolls and Newer / Older reach the rest. Null
+   * until the list has been measured, and nothing is fetched before then.
+   */
+  const [measureList, pageSize] = useRowsThatFit(folderView ? MESSAGE_ROW_H : THREAD_ROW_H);
   const listUrl = folderView
-    ? `/mail/folders/${encodeURIComponent(mb)}/${encodeURIComponent(f)}/messages?${new URLSearchParams({ ...(q ? { q } : {}), ...(unreadOnly ? { unread: '1' } : {}), ...(flaggedOnly ? { flagged: '1' } : {}), page: String(page), page_size: String(PAGE_SIZE) })}`
-    : `${view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`}&page=${page}&page_size=${PAGE_SIZE}`;
-  const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : api.raw(listUrl)), [listUrl]);
+    ? `/mail/folders/${encodeURIComponent(mb)}/${encodeURIComponent(f)}/messages?${new URLSearchParams({ ...(q ? { q } : {}), ...(unreadOnly ? { unread: '1' } : {}), ...(flaggedOnly ? { flagged: '1' } : {}), page: String(page), page_size: String(pageSize) })}`
+    : `${view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`}&page=${page}&page_size=${pageSize}`;
+  const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : !pageSize ? Promise.resolve(null) : api.raw(listUrl)), [listUrl]);
   const s = summary.data?.data;
   const putMany = (changes) => {
     const n = new URLSearchParams(params);
@@ -270,6 +288,19 @@ export default function Inbox() {
     return () => { clearInterval(pulling); clearInterval(refreshing); document.removeEventListener('visibilitychange', onVisible); };
   }, [view, refetchList, refetchSummary, refetchMailboxes]);
 
+  // A taller or shorter window changes how many rows a page holds; the
+  // page changes with it, so the conversation that was at the top stays on
+  // screen rather than the list jumping somewhere else.
+  const lastPageSize = useRef(pageSize);
+  useEffect(() => {
+    const before = lastPageSize.current;
+    lastPageSize.current = pageSize;
+    if (!before || !pageSize || before === pageSize) return;
+    const next = keepPlace(page, before, pageSize);
+    if (next !== page) put('p', next > 1 ? String(next) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
+
   // A page that no longer exists — the last few threads on it were closed
   // or the search narrowed — goes to the last one that does.
   useEffect(() => {
@@ -301,6 +332,7 @@ export default function Inbox() {
   // thread arriving above the selected one moves its index, which must not
   // pull focus out of the reply box or the search field.
   const listRef = useRef(null);
+  const setListNode = useCallback((node) => { listRef.current = node; measureList(node); }, [measureList]);
   useEffect(() => {
     if (at < 0 || !listRef.current?.contains(document.activeElement)) return;
     rowRefs.current[at]?.focus({ preventScroll: false });
@@ -326,7 +358,7 @@ export default function Inbox() {
       aria-pressed={on}
       onClick={() => putMany({ [key]: on ? null : '1', p: null })}
       className={cn(
-        'whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+        'whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors duration-150',
         on ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
       )}
     >
@@ -336,14 +368,17 @@ export default function Inbox() {
 
   return (
     <div className="flex h-dvh flex-col">
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[400px_minmax(0,1fr)]">
+      {/* One row, exactly the height of the screen. Without `grid-rows`
+          the grid's row grows to whatever the list holds, and the whole
+          page scrolled instead of the list fitting (#250). */}
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[400px_minmax(0,1fr)]">
         {/* The list. Its own header, because this screen is a place you
             live in rather than a page you visit. */}
         <div className={cn(
           'flex min-w-0 flex-col border-r border-border',
           selected && 'hidden lg:flex'
         )}>
-          <div className="flex items-center gap-2 px-5 pt-6 pb-3">
+          <div className="flex flex-wrap items-center gap-2 px-5 pt-6 pb-3">
             {/* This screen draws its own header instead of using PageHeader,
                 and PageHeader is where the burger lives. Without this the
                 inbox is a dead end on a phone: you can reach it and then
@@ -372,8 +407,9 @@ export default function Inbox() {
             <span aria-live="polite" className="shrink-0 whitespace-nowrap text-[13px] text-secondary-text">
               {folderView ? (currentFolder?.unread_count ? `${currentFolder.unread_count} unread` : '') : (s ? `${s.open} open` : '')}
             </span>
-            <div className="flex-1" />
-            <div className="flex shrink-0 items-center gap-1">
+            {/* The views sit on their own line: beside the title in a 400px
+                pane they squeezed the mailbox name down to nothing. */}
+            <div className="flex w-full items-center gap-1">
               {folderView ? (
                 <>
                   {filterButton('Unread', 'unread', unreadOnly)}
@@ -385,7 +421,7 @@ export default function Inbox() {
                   type="button"
                   onClick={() => { const n = new URLSearchParams(); n.set('view', v.key); setParams(n, { replace: true }); }}
                   className={cn(
-                    'whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors duration-150',
                     view === v.key ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -402,7 +438,7 @@ export default function Inbox() {
                   onClick={() => { const n = new URLSearchParams(); n.set('view', 'setup'); setParams(n, { replace: true }); }}
                   aria-label="Set up inboxes and canned responses"
                   className={cn(
-                    'ml-auto whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'ml-auto whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors duration-150',
                     view === 'setup' ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -421,14 +457,14 @@ export default function Inbox() {
           </div>
 
           <div
-            ref={listRef}
+            ref={setListNode}
             role="listbox"
             aria-label="Conversations"
             onKeyDown={onListKey}
             className="min-h-0 flex-1 overflow-y-auto focus:outline-none"
           >
-            {list.loading && !list.data ? (
-              <div className="p-5"><div className="skeleton" style={{ height: 120 }} /></div>
+            {!pageSize || (list.loading && !list.data) ? (
+              <div className="p-5"><div className="skeleton h-[120px]" /></div>
             ) : list.error ? (
               <Empty title="Not available" text={list.error} />
             ) : rows.length === 0 ? (
@@ -455,7 +491,7 @@ export default function Inbox() {
             )))}
           </div>
 
-          {meta && meta.total > 0 && (
+          {meta && meta.total > 0 ? (
             <Pager
               page={Math.min(page, meta.pages)}
               pages={meta.pages}
@@ -468,7 +504,7 @@ export default function Inbox() {
                 put('p', n > 1 ? String(n) : null);
               }}
             />
-          )}
+          ) : <PagerSpace />}
         </div>
 
         {/* The reading pane. On a phone it takes the screen, and the back
@@ -546,7 +582,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
     catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(false); }
   }
-  if (!c) return <div className="p-6"><div className="skeleton" style={{ height: 200 }} /></div>;
+  if (!c) return <div className="p-6"><div className="skeleton h-[200px]" /></div>;
   const t = thread.data?.data;
 
   return (
@@ -560,7 +596,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
           ← All conversations
         </button>
         <div className="flex items-start gap-4">
-          <h2 className="min-w-0 flex-1 text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{c.subject || '(no subject)'}</h2>
+          <h2 className="min-w-0 flex-1 font-display text-lg/[1.3] font-bold text-foreground">{c.subject || '(no subject)'}</h2>
           {/* The three things done to a conversation, on the line the
               subject is on. They were a third row under the metadata, which
               put 96px of chrome above every message on a pane whose whole
@@ -582,7 +618,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
               identically whichever one the client had written to. */}
           {c.inbox_email && <> · to <span className="text-foreground">{c.inbox_email.split('@')[0]}@</span></>}
           {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
-          {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}
+          {c.enquiry_no && <> · <Link to={recordPath('enquiry', c.enquiry_no)}>{c.enquiry_no}</Link></>}
           {c.response_due_at && c.status === 'open' && <> · reply due {when(c.response_due_at)}</>}
         </p>
 
@@ -631,7 +667,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
       )}
 
       <div className="flex flex-col gap-2.5 px-6 py-4">
-        {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m, i) => (
+        {!t ? <div className="skeleton h-[120px]" /> : t.messages.map((m, i) => (
           <Message key={m.id} m={m} openByDefault={i >= t.messages.length - 1 || t.messages.length <= 2} />
         ))}
 
@@ -645,7 +681,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border p-4">
+          <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-[12.5px] font-medium text-foreground">Reply from the shared address</span>
               <div className="flex-1" />
@@ -680,21 +716,23 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
           </div>
         )}
       </div>
-      {converting && <ConvertDialog c={c} people={lookups.sales_people} sources={lookups.lead_sources || []} onClose={() => setConverting(false)} onDone={() => { setConverting(false); conv.refetch(); onChanged(); }} />}
+      {converting && <ConvertDialog c={c} lookups={lookups} sources={lookups.lead_sources || []} onClose={() => setConverting(false)} onDone={() => { setConverting(false); conv.refetch(); onChanged(); }} />}
       {snoozing && <SnoozeDialog onClose={() => setSnoozing(false)} onSnooze={(until) => { setSnoozing(false); update({ status: 'snoozed', snoozed_until: until }, 'Snoozed'); }} />}
     </div>
   );
 }
 
-function ConvertDialog({ c, people, sources, onClose, onDone }) {
+function ConvertDialog({ c, lookups, sources, onClose, onDone }) {
   const toast = useToast();
-  const [v, setV] = useState({ client_name: c.company_name || '', contact_person: c.contact_name || c.from_name || '', service: c.subject || '', sales_person: c.assignee || '', source_id: '', notes: '' });
+  const [v, setV] = useState({ client_name: c.company_name || '', contact_person: c.contact_name || c.from_name || '', service: c.subject || '', sales_person: ownerNamed(lookups, c.assignee), source_id: '', notes: '' });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }));
   async function go() {
     setBusy(true);
     try {
       const body = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== ''));
+      // Always sent, so a blank Owner means no owner rather than the assignee.
+      body.sales_person = v.sales_person || null;
       const { data } = await api.action(`/inbox/${c.id}/convert`, body);
       toast(`Enquiry ${data.enquiry_no} created`, 'success'); onDone();
     } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); setBusy(false); }
@@ -706,7 +744,7 @@ function ConvertDialog({ c, people, sources, onClose, onDone }) {
         <Field label="Company" required><Input value={v.client_name} onChange={set('client_name')} /></Field>
         <Field label="Contact"><Input value={v.contact_person} onChange={set('contact_person')} /></Field>
         <div className="span-all"><Field label="Service asked for"><Input value={v.service} onChange={set('service')} /></Field></div>
-        <Field label="Owner"><Input list="convert-people" value={v.sales_person} onChange={set('sales_person')} /><datalist id="convert-people">{people.map((p) => <option key={p} value={p} />)}</datalist></Field>
+        <Field label="Owner" hint={OWNER_HINT}><Select value={v.sales_person} options={ownerOptions(lookups)({})} onChange={set('sales_person')} /></Field>
         <Field label="Source" hint="Blank: Inbound email or call"><Select value={v.source_id} options={sources.map((x) => ({ value: String(x.id), label: x.name }))} onChange={set('source_id')} /></Field>
         <div className="span-all"><Field label="Notes"><Textarea rows={2} value={v.notes} onChange={set('notes')} /></Field></div>
       </div>
@@ -777,7 +815,7 @@ function InboxSetup() {
   return (
     <>
       <Card flush title="Inboxes" hint={<>A shared mailbox connected under <Link to="/mailboxes">Mailboxes</Link> becomes an inbox here.</>}
-        actions={<button type="button" className="btn btn--sm btn--primary" disabled={!avail.length} title={avail.length ? '' : 'Connect a shared mailbox first'} onClick={() => setForm({ name: 'Sales', account_id: String(avail[0].id), default_assignment: 'owner_of_company', members: '', first_response_hours: '', signature: '' })}>+ Inbox</button>}>
+        actions={<button type="button" className="btn btn--sm btn--primary" disabled={!avail.length} title={avail.length ? '' : 'Connect a shared mailbox first'} onClick={() => setForm({ name: 'Sales', account_id: String(avail[0].id), default_assignment: 'owner_of_company', members: '', first_response_hours: '', signature: '' })}>New inbox</button>}>
         <DataTable rows={rows} empty={<Empty title="No inbox yet" text="Connect the shared sales mailbox under Mailboxes, then add it here." />} columns={[
           { key: 'name', header: 'Inbox', className: 'strong', render: (r) => <>{r.name}<div className="small muted">{r.email}</div></> },
           { key: 'default_assignment', header: 'New email goes to', render: (r) => ({ owner_of_company: 'The client\'s owner, else round robin', round_robin: 'Round robin', unassigned: 'Unassigned queue' }[r.default_assignment]) },
@@ -794,7 +832,7 @@ function InboxSetup() {
           },
         ]} />
       </Card>
-      <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>+ Response</button>}>
+      <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>New response</button>}>
         <DataTable rows={canned.data?.data ?? []} columns={[
           { key: 'name', header: 'Name', className: 'strong' },
           { key: 'body', header: 'Text', className: 'wrap small', render: (r) => r.body.slice(0, 160) },

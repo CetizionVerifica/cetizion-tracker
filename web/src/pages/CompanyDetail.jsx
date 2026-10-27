@@ -13,6 +13,7 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
+import { recordPath } from '../lib/journey.js';
 
 /**
  * One client, on one page.
@@ -41,7 +42,7 @@ function relationship(c) {
     ...c.enquiries.map((e) => ({
       key: `e${e.id}`, when: e.enquiry_date, icon: MessageSquare,
       title: e.service || 'Enquiry', status: e.status, amount: null,
-      to: '/enquiries', muted: /lost|closed/i.test(e.status || ''),
+      to: recordPath('enquiry', e.enquiry_no) || '/enquiries', muted: /lost|closed/i.test(e.status || ''),
     })),
     ...c.quotations.map((q) => ({
       key: `q${q.id}`, when: q.quotation_date, icon: FileText,
@@ -94,7 +95,7 @@ export default function CompanyDetail() {
   }
 
   if (error) return <><PageHeader title="Company" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !c) return <><PageHeader title="Company" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
+  if (loading || !c) return <><PageHeader title="Company" /><div className="page"><div className="skeleton h-[200px]" /></div></>;
 
   const contactFields = [
     { name: 'company_id', type: 'hidden', default: c.id },

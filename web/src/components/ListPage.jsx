@@ -1,5 +1,6 @@
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Download, Plus, Search, SlidersHorizontal, X } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
 import { Alert, Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
 import { RecordForm } from './RecordForm.jsx';
@@ -9,6 +10,8 @@ import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
 import { useDebounced, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
+import { localToday } from '../lib/reportPeriods.js';
+import { LIST_DATE_PRESETS, listPresetOf, listPresetRange } from '../lib/listDateRange.js';
 
 /**
  * The standard list screen: search, filters, CSV export, create / edit /
@@ -33,6 +36,7 @@ export function ListPage({
   initialFilters,
   initialSearch,
   dateFilterLabel = 'Date',
+  dateRange = false,
   refreshToken,
   onSaved,
   rowActions = true,
@@ -40,7 +44,7 @@ export function ListPage({
   banner,
 }) {
   const toast = useToast();
-  const [urlParams] = useSearchParams();
+  const [urlParams, setUrlParams] = useSearchParams();
 
   /**
    * A filter named in the address bar is applied, whatever list this is.
@@ -52,7 +56,10 @@ export function ListPage({
    * and a view pointing at any other filter quietly did nothing.
    */
   const fromUrl = {};
-  for (const { name } of filters) {
+  // A list with `dateRange` shows a picker for ?from=&to= on its resource's
+  // date column, so the pair is a filter like any other.
+  const urlKeys = [...filters.map((f) => f.name), ...(dateRange ? ['from', 'to'] : [])];
+  for (const name of urlKeys) {
     const value = urlParams.get(name);
     if (value) fromUrl[name] = value;
   }
@@ -84,8 +91,14 @@ export function ListPage({
   // address bar would say one thing and the table show another. Compared by
   // value, so a filter the user picked by hand is left alone.
   const initialFiltersKey = JSON.stringify({ ...initialFilters, ...fromUrl });
+  // The address the list itself last wrote (below). When the URL changes
+  // because of that write, the filters already say it; only a change from
+  // outside (a link, a tile, the back button) is read back in.
+  const lastWrite = useRef(null);
   useEffect(() => {
+    if (lastWrite.current === urlParams.toString()) return;
     setFilterValues(JSON.parse(initialFiltersKey));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFiltersKey]);
   useEffect(() => {
     setSearch(initialSearch || '');
@@ -103,6 +116,35 @@ export function ListPage({
   // refreshToken lets a parent pull fresh rows after an action without
   // remounting, so the user's search and filters survive.
   const { rows, total, loading, error, refetch } = useList(resource, params, [refreshToken]);
+
+  /**
+   * Filters live in the URL (web/CLAUDE.md §2), so a link or a refresh
+   * carries them. Each dropdown and the search are written back as they
+   * change, replacing the history entry rather than adding one per click.
+   */
+  useEffect(() => {
+    const next = new URLSearchParams(urlParams);
+    for (const name of urlKeys) {
+      if (filterValues[name]) next.set(name, filterValues[name]);
+      else next.delete(name);
+    }
+    if (debouncedSearch) next.set('q', debouncedSearch);
+    else next.delete('q');
+    if (next.toString() !== urlParams.toString()) {
+      lastWrite.current = next.toString();
+      setUrlParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(filterValues), debouncedSearch]);
+
+  // Three filters show; the rest wait behind "More filters", which opens by
+  // itself when one of them is already set so a filter is never hidden.
+  const INLINE = 3;
+  const extra = filters.slice(INLINE);
+  const extraSet = extra.filter((f) => filterValues[f.name]).length;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const showMore = moreOpen || extraSet > 0;
+  const filtering = Boolean(search) || Object.keys(filterValues).length > 0;
 
   const setFilter = (name, value) =>
     setFilterValues((current) => {
@@ -154,8 +196,8 @@ export function ListPage({
                 Edit
               </button>
               {mayDelete && (
-                <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDeleting(row)}>
-                  ✕
+                <button type="button" className="btn btn--sm btn--ghost" aria-label="Delete" onClick={() => setDeleting(row)}>
+                  <X className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -173,14 +215,17 @@ export function ListPage({
           <>
             {extraActions}
             <a className="btn" href={api.exportUrl(resource, params)} download title="What the list shows now, with the same search and filters">
-              Export CSV
+              <Download className="size-4" strokeWidth={1.75} aria-hidden="true" />
+              CSV
             </a>
             <a className="btn" href={api.exportXlsxUrl(resource, params)} download title="What the list shows now, as an Excel workbook">
-              Export Excel
+              <Download className="size-4" strokeWidth={1.75} aria-hidden="true" />
+              Excel
             </a>
             {fields && (
               <button type="button" className="btn btn--primary" onClick={() => setEditing('new')}>
-                + {newLabel || 'New'}
+                <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                {newText(newLabel)}
               </button>
             )}
           </>
@@ -211,33 +256,44 @@ export function ListPage({
           />
           <div className="toolbar">
             <div className="search">
-              <span className="search__icon">⌕</span>
+              <Search className="search__icon size-4" strokeWidth={1.75} aria-hidden="true" />
               <input
                 className="input"
+                type="search"
+                aria-label={`Search ${title.toLowerCase()}`}
                 placeholder={searchPlaceholder}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
 
-            {filters.map((filter) => (
-              <select
-                key={filter.name}
-                className="select"
-                value={filterValues[filter.name] || ''}
-                onChange={(e) => setFilter(filter.name, e.target.value)}
-              >
-                <option value="">{filter.label}: all</option>
-                {filter.options.map((opt) => {
-                  const value = typeof opt === 'string' ? opt : opt.value;
-                  const label = typeof opt === 'string' ? opt : opt.label;
-                  return <option key={value} value={value}>{label}</option>;
-                })}
-              </select>
+            {dateRange && (
+              <DateRangeFilter
+                label={dateFilterLabel}
+                from={filterValues.from || ''}
+                to={filterValues.to || ''}
+                onChange={({ from, to }) => setFilterValues(({ from: _f, to: _t, ...rest }) => ({ ...rest, ...(from ? { from } : {}), ...(to ? { to } : {}) }))}
+              />
+            )}
+
+            {(showMore ? filters : filters.slice(0, INLINE)).map((filter) => (
+              <FilterSelect key={filter.name} filter={filter} value={filterValues[filter.name] || ''} onChange={(v) => setFilter(filter.name, v)} />
             ))}
 
-            {/* A date range arrives only from a report link, so show it and let it be removed. */}
-            {(filterValues.from || filterValues.to) && (
+            {extra.length > 0 && extraSet === 0 && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                aria-expanded={showMore}
+                onClick={() => setMoreOpen((open) => !open)}
+              >
+                <SlidersHorizontal className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                {showMore ? 'Fewer filters' : `More filters (${extra.length})`}
+              </button>
+            )}
+
+            {/* Without a picker, a date range arrives only from a report link, so show it and let it be removed. */}
+            {!dateRange && (filterValues.from || filterValues.to) && (
               <span className="small nowrap">
                 {dateFilterLabel}: {filterValues.from ? date(filterValues.from) : 'start'} – {filterValues.to ? date(filterValues.to) : 'today'}
                 <button
@@ -246,12 +302,12 @@ export function ListPage({
                   aria-label="Remove date filter"
                   onClick={() => setFilterValues(({ from, to, ...rest }) => rest)}
                 >
-                  ✕
+                  <X className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 </button>
               </span>
             )}
 
-            {(search || Object.keys(filterValues).length > 0) && (
+            {filtering && (
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
@@ -265,8 +321,8 @@ export function ListPage({
             )}
 
             <div className="spacer" />
-            <span className="small muted nowrap">
-              {loading ? 'Loading…' : `${rows.length} of ${total}`}
+            <span className="small muted nowrap num" aria-live="polite">
+              {loading ? 'Loading…' : rows.length === total ? `${total} ${total === 1 ? 'record' : 'records'}` : `${rows.length} of ${total}`}
             </span>
           </div>
 
@@ -285,16 +341,21 @@ export function ListPage({
               empty={
                 emptyState || (
                   <Empty
-                    title={search || Object.keys(filterValues).length ? 'Nothing matches those filters' : `No ${title.toLowerCase()} yet`}
+                    title={filtering ? 'Nothing matches those filters' : `No ${title.toLowerCase()} yet`}
                     text={
-                      search || Object.keys(filterValues).length
+                      filtering
                         ? 'Try clearing the search or filters.'
-                        : fields && 'Add the first one to get started.'
+                        : fields && `Each one you add shows here, with its status and what it waits on.`
                     }
                     action={
-                      fields && !search && (
+                      filtering ? (
+                        <button type="button" className="btn" onClick={() => { setSearch(''); setFilterValues({}); }}>
+                          Clear the filters
+                        </button>
+                      ) : fields && (
                         <button type="button" className="btn btn--primary" onClick={() => setEditing('new')}>
-                          + {newLabel || 'New'}
+                          <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                          {newText(newLabel)}
                         </button>
                       )
                     }
@@ -335,6 +396,30 @@ export function ListPage({
   );
 }
 
+/** "New quotation": the verb and the thing, in sentence case. */
+function newText(label) {
+  return label ? `New ${label.charAt(0).toLowerCase()}${label.slice(1)}` : 'New';
+}
+
+/** One filter: a labelled dropdown whose blank choice reads "<Label>: all". */
+function FilterSelect({ filter, value, onChange }) {
+  return (
+    <select
+      className="select"
+      aria-label={filter.label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{filter.label}: all</option>
+      {filter.options.map((opt) => {
+        const v = typeof opt === 'string' ? opt : opt.value;
+        const label = typeof opt === 'string' ? opt : opt.label;
+        return <option key={v} value={v}>{label}</option>;
+      })}
+    </select>
+  );
+}
+
 const SLICE_LABEL = {
   outcome: {
     converted: 'converted to a PO', pipeline: 'still in the pipeline', quoted_not_won: 'quoted, not won', lost: 'lost before a quotation',
@@ -346,6 +431,51 @@ const SLICE_LABEL = {
 };
 
 /** "The 4 records behind the Reports chart: 1 Sep 2026 – 30 Sep 2026, lost before a quotation." */
+/**
+ * A preset menu for the list's date column, with From and To fields once a
+ * range is set or "Custom range" is picked. Both ends are inclusive and
+ * either may be left open; the server reads them as ?from=&to=.
+ */
+function DateRangeFilter({ label, from, to, onChange }) {
+  const preset = listPresetOf(from, to, localToday());
+  // "Custom range" with no dates yet has nothing in the URL to say so.
+  const [custom, setCustom] = useState(false);
+  const showFields = custom || preset !== '';
+  return (
+    <span className="date-range">
+      <select
+        className="select"
+        aria-label={label}
+        value={preset || (custom ? 'custom' : '')}
+        onChange={(e) => {
+          const key = e.target.value;
+          setCustom(key === 'custom');
+          if (key === 'custom') return;
+          onChange(listPresetRange(key, localToday()) || { from: '', to: '' });
+        }}
+      >
+        <option value="">{label}: any time</option>
+        {LIST_DATE_PRESETS.map((p) => <option key={p.key} value={p.key}>{label}: {p.label.charAt(0).toLowerCase() + p.label.slice(1)}</option>)}
+      </select>
+      {showFields && (
+        <>
+          <input className="input" type="date" aria-label={`${label} from`} value={from} max={to || undefined} onChange={(e) => { setCustom(true); onChange({ from: e.target.value, to }); }} />
+          <span className="small muted" aria-hidden="true">to</span>
+          <input className="input" type="date" aria-label={`${label} to`} value={to} min={from || undefined} onChange={(e) => { setCustom(true); onChange({ from, to: e.target.value }); }} />
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            aria-label={`Remove ${label.toLowerCase()} filter`}
+            onClick={() => { setCustom(false); onChange({ from: '', to: '' }); }}
+          >
+            <X className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </>
+      )}
+    </span>
+  );
+}
+
 function reportBannerText(q, total) {
   const parts = [`${date(q.report_from)} – ${date(q.report_to)}`];
   if (q.report_outcome) parts.push(SLICE_LABEL.outcome[q.report_outcome] ?? q.report_outcome);
