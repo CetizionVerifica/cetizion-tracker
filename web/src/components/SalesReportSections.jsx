@@ -327,8 +327,8 @@ export function RevenueSection({ report, scope }) {
     <Section n={6} scope={scope} csv={[['revenue', 'Months CSV'], ['revenue-pos', 'POs CSV']]} question="Monthly revenue" answer={report.narrative.revenue} wide>
       <ChartCard
         title="PO value incl. GST, per month"
-        meta="Counting POs by PO date, in ₹ at the rate on the PO date. Not net of GST."
-        columns={['Month', 'POs', 'PO value incl. GST', 'Invoiced', 'Received']}
+        meta="Counting POs by PO date, in ₹ at the rate on the PO date. Includes GST where the PO carries it (export POs are zero-rated)."
+        columns={['Month', 'POs', 'PO value incl. GST', 'Invoiced', 'Received (incl. TDS)']}
         rows={revenue.months.map((m) => ({
           key: m.key ?? 'undated',
           href: m.key ? drillLink('purchase-orders', scope, { month: m.key }) : null,
@@ -370,7 +370,7 @@ export function RevenueSection({ report, scope }) {
                 { key: 'owner', header: 'Owner', render: (r) => r.owner || '—' },
                 { key: 'po_value_inr', header: 'PO value', align: 'right', render: (r) => (r.po_value_inr == null ? (r.po_value == null ? 'No value' : money(r.po_value, r.currency)) : inrFull(r.po_value_inr)) },
                 { key: 'invoiced_inr', header: 'Invoiced', align: 'right', render: (r) => inrFull(r.invoiced_inr) },
-                { key: 'received_inr', header: 'Received', align: 'right', render: (r) => inrFull(r.received_inr) },
+                { key: 'received_inr', header: 'Received (incl. TDS)', align: 'right', render: (r) => inrFull(r.received_inr) },
               ]}
             />
           </details>
