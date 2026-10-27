@@ -78,6 +78,9 @@ describe('the daily briefing in words', () => {
     assert.equal(rows['Pending quotations'].detail, '1 enquiry not quoted, 1 quotation not answered');
     assert.deepEqual(rows['Overdue (over 7 days)'], { metric: 'Overdue (over 7 days)', count: '3', detail: '2 invoices, 1 PO' });
     assert.equal(rows['Other sales activity'].count, '0');
+    // payments_received_inr sums payments.amount, so it is cash only and says so.
+    assert.ok(rows['Payments received (cash)']);
+    assert.equal(rows['Payments received'], undefined);
   });
 
   test('the source line names every mailbox read, its folders and the window', () => {

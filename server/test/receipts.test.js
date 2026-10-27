@@ -110,4 +110,79 @@ describe('recording money against a stage', { skip: !ADMIN_URL && 'set TEST_DATA
     assert.equal(Number(rows[1].amount), -10000);
     assert.match(rows[1].notes, /total set to 20000/);
   });
+
+  // TDS settles the stage as cash does, so cash + TDS is what a receipt
+  // settles. A receipt whose two legs add up to more than is outstanding
+  // over-settled the stage: 1,18,000 pre-filled plus 10,000 TDS read as
+  // 1,28,000 received.
+  const stageAmount = async (id) => {
+    const { body } = await agent.get(`/api/payment-stages/${id}`).expect(200);
+    return Number(body.data.stage_amount);
+  };
+  const ledger = async (id) => (await db.query('SELECT amount, tds_amount FROM payments WHERE stage_id = $1 ORDER BY id', [id]))
+    .rows.map((r) => [Number(r.amount), Number(r.tds_amount)]);
+
+  test('cash plus TDS equal to the outstanding pays the stage, and no more', async () => {
+    const id = await invoicedStage();
+    const due = await stageAmount(id);
+    await agent.post(`/api/payment-stages/${id}/payment`)
+      .send({ mode: 'add', amount_received: due - 10000, tds_amount: 10000, payment_received_date: '2026-09-21' }).expect(200);
+    const { body } = await agent.get(`/api/payment-stages/${id}`).expect(200);
+    assert.equal(Number(body.data.amount_received), due);
+    assert.equal(body.data.stage_status, 'Paid');
+  });
+
+  test('cash plus TDS above the outstanding is refused and nothing is stored', async () => {
+    const id = await invoicedStage();
+    const due = await stageAmount(id);
+    const res = await agent.post(`/api/payment-stages/${id}/payment`)
+      .send({ mode: 'add', amount_received: due, tds_amount: 10000, payment_received_date: '2026-09-21' });
+    assert.equal(res.status, 422);
+    assert.match(res.body.error.fields.amount_received, /₹[\d,]+\.\d\d, more than the ₹[\d,]+\.\d\d outstanding/, 'said as money');
+    assert.deepEqual(await ledger(id), []);
+    assert.equal(await received(id), 0);
+
+    // After a part payment, the cap is what is still outstanding.
+    await agent.post(`/api/payment-stages/${id}/payment`).send({ mode: 'add', amount_received: 50000, payment_received_date: '2026-09-21' }).expect(200);
+    const over = await agent.post(`/api/payment-stages/${id}/payment`)
+      .send({ mode: 'add', amount_received: due - 50000, tds_amount: 1, payment_received_date: '2026-09-22' });
+    assert.equal(over.status, 422);
+    assert.equal(await received(id), 50000);
+  });
+
+  test('two receipts with TDS at once cannot both settle the same outstanding', async () => {
+    const id = await invoicedStage();
+    const due = await stageAmount(id);
+    const send = () => agent.post(`/api/payment-stages/${id}/payment`)
+      .send({ mode: 'add', amount_received: due - 10000, tds_amount: 10000, payment_received_date: '2026-09-21' });
+    const results = await Promise.all([send(), send(), send()]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 422, 422]);
+    assert.equal(await received(id), due);
+  });
+
+  test("'set' with TDS records the cash as the difference less the TDS", async () => {
+    const id = await invoicedStage();
+    const due = await stageAmount(id);
+    await agent.post(`/api/payment-stages/${id}/payment`).send({ mode: 'add', amount_received: 20000, payment_received_date: '2026-09-21' }).expect(200);
+    // The total settled becomes the stage amount, 10,000 of it TDS.
+    await agent.post(`/api/payment-stages/${id}/payment`)
+      .send({ mode: 'set', amount_received: due, tds_amount: 10000, payment_received_date: '2026-09-22' }).expect(200);
+    assert.equal(await received(id), due);
+    assert.deepEqual((await ledger(id))[1], [due - 30000, 10000]);
+
+    // TDS more than the change, or with the total coming down, is refused rather than half-recorded.
+    const other = await invoicedStage();
+    await agent.post(`/api/payment-stages/${other}/payment`).send({ mode: 'add', amount_received: 50000, payment_received_date: '2026-09-21' }).expect(200);
+    const tooMuch = await agent.post(`/api/payment-stages/${other}/payment`)
+      .send({ mode: 'set', amount_received: 55000, tds_amount: 10000, payment_received_date: '2026-09-22' });
+    assert.equal(tooMuch.status, 422);
+    assert.ok(tooMuch.body.error.fields.tds_amount);
+    const down = await agent.post(`/api/payment-stages/${other}/payment`)
+      .send({ mode: 'set', amount_received: 40000, tds_amount: 1000, payment_received_date: '2026-09-22' });
+    assert.equal(down.status, 422);
+    const over = await agent.post(`/api/payment-stages/${other}/payment`)
+      .send({ mode: 'set', amount_received: due + 10000, tds_amount: 10000, payment_received_date: '2026-09-22' });
+    assert.equal(over.status, 422);
+    assert.deepEqual(await ledger(other), [[50000, 0]]);
+  });
 });

@@ -167,7 +167,8 @@ export default function AcceptQuotation({ token }) {
         )}
         {q.tax_total != null && (
           <div className="flex justify-between py-1 text-secondary-text">
-            <span>GST</span><span className="tabular-nums">{fmtMoney(q.tax_total, q.currency)}</span>
+            <span>{String(q.currency || 'INR').toUpperCase() !== 'INR' ? 'Zero-rated (export)' : 'GST'}</span>
+            <span className="tabular-nums">{fmtMoney(q.tax_total, q.currency)}</span>
           </div>
         )}
         <Separator className="my-2" />

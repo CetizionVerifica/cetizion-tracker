@@ -4,8 +4,16 @@ import { scopedSources, scopeOf } from '../auth/ownership.js';
 import { dataQuality } from '../lib/dataQuality.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
 import { payables } from '../lib/payables.js';
+import { QUOTATION_STATUS } from '../lib/statuses.js';
 
 export const dashboardRouter = Router();
+
+// A quotation still being decided: neither won nor lost. The same open set the
+// inbox and the mailbox use. The overview's open count and open value both
+// read this one list, so they cannot disagree. Constants, not user input.
+const OPEN_QUOTATION_SQL = [
+  QUOTATION_STATUS.draft, QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.onHold,
+].map((s) => `'${s}'`).join(',');
 
 /**
  * The overview screen: the same headline numbers the workbook's three
@@ -27,11 +35,14 @@ dashboardRouter.get('/overview', async (req, res) => {
       SELECT
         COUNT(*)::int                                              AS quotations,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received')::int  AS won,
-        COUNT(*) FILTER (WHERE status IN ('Draft','Submitted','Under Negotiation'))::int AS open,
+        COUNT(*) FILTER (WHERE status IN (${OPEN_QUOTATION_SQL}))::int AS open,
         COUNT(*) FILTER (WHERE status = 'Lost')::int               AS lost,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0) AS value_inr,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'
                  AND status = 'Won - PO Received'), 0)             AS won_value_inr,
+        -- Quoted minus won would count Lost as open.
+        COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'
+                 AND status IN (${OPEN_QUOTATION_SQL})), 0) AS open_value_inr,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received'
                  AND project_id IS NULL)::int                      AS won_without_project
       FROM ${src.vQuotations} q`, ownerParams),
@@ -69,7 +80,8 @@ dashboardRouter.get('/overview', async (req, res) => {
         (SELECT COUNT(*)::int FROM travel_logs)                    AS trips,
         (SELECT COALESCE(SUM(total_travel_cost), 0) FROM v_travel_logs) AS total_cost,
         (SELECT COUNT(*)::int FROM v_travel_vendor_invoices WHERE finance_to_pay) AS vendor_to_pay,
-        (SELECT COALESCE(SUM(invoice_amount - amount_paid), 0)
+        -- Less what credit notes gave back, as finance_to_pay itself is (#196).
+        (SELECT COALESCE(SUM(net_payable - amount_paid), 0)
            FROM v_travel_vendor_invoices WHERE finance_to_pay)     AS vendor_to_pay_amount,
         (SELECT COUNT(*)::int FROM v_travel_vendor_invoices WHERE payment_status = 'Overdue') AS vendor_overdue,
         (SELECT COUNT(*)::int FROM v_employee_expense_claims WHERE status = 'Pending approval') AS claims_pending,

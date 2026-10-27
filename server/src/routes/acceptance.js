@@ -164,7 +164,9 @@ function clientView(q, a) {
       // new — it is telling them who to reply to.
       sales_person: q.sales_person || null,
       currency: q.currency, subtotal: q.subtotal, tax_total: q.tax_total, total: q.total ?? q.quotation_value, terms: q.terms,
-      lines: q.lines.map((l) => ({ description: l.description || l.service_name, qty: l.qty, unit: l.unit, rate: l.rate, discount_percent: l.discount_percent, gst_rate: l.gst_rate, amount: l.amount })),
+      // An export (not in INR) is zero-rated: its lines carry no GST, whatever rate they were entered at.
+      lines: q.lines.map((l) => ({ description: l.description || l.service_name, qty: l.qty, unit: l.unit, rate: l.rate, discount_percent: l.discount_percent,
+        gst_rate: String(q.currency || 'INR').toUpperCase() !== 'INR' ? 0 : l.gst_rate, amount: l.amount })),
     },
     seller: { name: q.settings.company_name || 'Cetizion Verifica', address: q.settings.company_address || null, gstin: q.settings.company_gstin || null },
   };

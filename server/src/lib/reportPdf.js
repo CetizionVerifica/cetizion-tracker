@@ -308,14 +308,14 @@ function revenueSection(report) {
         { header: 'POs', value: (r) => number(r.pos), total: (t) => number(t.pos), align: 'right', width: 40 },
         { header: 'PO value incl. GST', value: (r) => inr(r.po_value_inr), total: (t) => inr(t.po_value_inr), align: 'right', width: 95 },
         { header: 'Invoiced', value: (r) => inr(r.invoiced_inr), total: (t) => inr(t.invoiced_inr), align: 'right', width: 85 },
-        { header: 'Received', value: (r) => inr(r.received_inr), total: (t) => inr(t.received_inr), align: 'right', width: 85 },
+        { header: 'Received (incl. TDS)', value: (r) => inr(r.received_inr), total: (t) => inr(t.received_inr), align: 'right', width: 85 },
       ],
       rows: revenue.months,
       total: revenue.total,
     }),
     {
-      text: 'Revenue is the value of the POs that count as a sale (not cancelled, not replaced by a revision), including GST, by PO date, converted to INR at the rate on the PO date. '
-        + 'Invoiced and received are dated by the invoice and the payment: the billing and cash view of each month, not a split of its PO value.',
+      text: 'Revenue is the value of the POs that count as a sale (not cancelled, not replaced by a revision), including GST where the PO carries it (export POs are zero-rated), by PO date, converted to INR at the rate on the PO date. '
+        + 'Invoiced and received are dated by the invoice and the payment: the billing and cash view of each month, not a split of its PO value. Received includes TDS the client deducted.',
       style: 'lead',
       margin: [0, 3, 0, 0],
     },
@@ -334,7 +334,7 @@ function revenueSection(report) {
               { header: 'Owner', value: (r) => r.owner || '—', width: 70 },
               { header: 'PO value (INR)', value: (r) => (r.po_value_inr == null ? (r.po_value == null ? 'No value' : money(r.po_value, r.currency)) : inr(r.po_value_inr)), align: 'right', width: 80 },
               { header: 'Invoiced', value: (r) => inr(r.invoiced_inr), align: 'right', width: 70 },
-              { header: 'Received', value: (r) => inr(r.received_inr), align: 'right', width: 70 },
+              { header: 'Received (incl. TDS)', value: (r) => inr(r.received_inr), align: 'right', width: 70 },
             ],
             rows: pos.slice(0, MAX_PO_ROWS),
             compact: true,
