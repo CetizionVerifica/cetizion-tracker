@@ -40,7 +40,7 @@ export default function Cashflow() {
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {d && (
           <div className="auto-grid--stats">
-            <Stat label={`In, next ${months} months`} value={money(totals.inflow)} meta="invoiced + scheduled" />
+            <Stat label={`In, next ${months} months`} value={money(totals.inflow)} meta="invoiced + scheduled, gross before TDS" />
             <Stat label="Pipeline on top" value={money(totals.pipeline)} meta="weighted by probability" />
             <Stat label="Out" value={money(totals.outflow)} meta="vendors + claims" />
             <Stat label="Net" value={money(totals.inflow - totals.outflow)} tone={totals.inflow - totals.outflow < 0 ? 'danger' : ''} />
