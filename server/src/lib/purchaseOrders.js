@@ -285,7 +285,9 @@ export async function registerPurchaseOrder(client, b, { scope = { unrestricted:
     // each line is grossed up by its own rate first and then scaled by what
     // the PO is worth against the quotation. A PO for the full quoted total
     // keeps each line's own value, and a negotiated PO scales them down.
-    const gross = lines.map((l) => Number(l.amount) * (1 + Number(l.gst_rate || 0) / 100));
+    // An export (non-INR) PO is zero-rated, so its lines carry no GST to gross up.
+    const zeroRated = String(currency || 'INR').toUpperCase() !== 'INR';
+    const gross = lines.map((l) => Number(l.amount) * (1 + (zeroRated ? 0 : Number(l.gst_rate || 0)) / 100));
     const grossSum = gross.reduce((n, v) => n + v, 0);
     const factor = grossSum > 0 ? Number(poValue) / grossSum : 1;
     const values = gross.map((v) => Math.round(v * factor * 100) / 100);

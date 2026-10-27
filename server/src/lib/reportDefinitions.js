@@ -1004,8 +1004,10 @@ async function servicePieces(poRows) {
     ),
     query(
       `SELECT ql.quotation_id, COALESCE(s.name, ql.description) AS text,
-              (ql.amount * (1 + ql.gst_rate / 100))::float8 AS value
+              -- An export (non-INR) quotation is zero-rated: its lines carry no GST.
+              (ql.amount * (1 + CASE WHEN upper(COALESCE(q.currency, 'INR')) <> 'INR' THEN 0 ELSE ql.gst_rate END / 100))::float8 AS value
          FROM quotation_lines ql
+         JOIN quotations q ON q.id = ql.quotation_id
          LEFT JOIN services s ON s.id = ql.service_id
         WHERE ql.quotation_id = ANY($1::int[])
         ORDER BY ql.quotation_id, ql.sort_order, ql.id`,
