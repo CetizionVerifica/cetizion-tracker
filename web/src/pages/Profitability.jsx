@@ -49,7 +49,7 @@ export default function Profitability() {
 
   return (
     <>
-      <PageHeader title="Profitability" subtitle="Margin on delivered work: PO value against travel, claims and other delivery costs, in INR. Periods follow the PO date."
+      <PageHeader title="Profitability" subtitle="Margin on delivered work: PO value before GST against travel, claims and other delivery costs, in INR. Periods follow the PO date."
         actions={<>
           <Select value={group} placeholder={null} options={GROUPS} onChange={(e) => setGroup(e.target.value)} />
           <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="POs from" />
