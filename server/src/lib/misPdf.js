@@ -424,7 +424,7 @@ export function weeklyMisDoc(data, { company = 'Cetizion Verifica', generatedAt 
         { header: 'Invoices', value: (r) => number(r.invoices), align: 'right', width: 60 },
         { header: 'Invoiced (₹)', value: (r) => inr(r.invoiced_inr), align: 'right', width: 100 },
         { header: 'Payments', value: (r) => number(r.payments), align: 'right', width: 60 },
-        { header: 'Received (₹)', value: (r) => inr(r.received_inr), align: 'right', width: 100 },
+        { header: 'Cash received (₹)', value: (r) => inr(r.received_inr), align: 'right', width: 100 },
       ],
       rows: [{ label: 'This week', ...b.week }, { label: mtd, ...b.month_to_date }],
     }),

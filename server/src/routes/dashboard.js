@@ -4,8 +4,16 @@ import { scopedSources, scopeOf } from '../auth/ownership.js';
 import { dataQuality } from '../lib/dataQuality.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
 import { payables } from '../lib/payables.js';
+import { QUOTATION_STATUS } from '../lib/statuses.js';
 
 export const dashboardRouter = Router();
+
+// A quotation still being decided: neither won nor lost. The same open set the
+// inbox and the mailbox use. The overview's open count and open value both
+// read this one list, so they cannot disagree. Constants, not user input.
+const OPEN_QUOTATION_SQL = [
+  QUOTATION_STATUS.draft, QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.onHold,
+].map((s) => `'${s}'`).join(',');
 
 /**
  * The overview screen: the same headline numbers the workbook's three
@@ -27,11 +35,14 @@ dashboardRouter.get('/overview', async (req, res) => {
       SELECT
         COUNT(*)::int                                              AS quotations,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received')::int  AS won,
-        COUNT(*) FILTER (WHERE status IN ('Draft','Submitted','Under Negotiation'))::int AS open,
+        COUNT(*) FILTER (WHERE status IN (${OPEN_QUOTATION_SQL}))::int AS open,
         COUNT(*) FILTER (WHERE status = 'Lost')::int               AS lost,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0) AS value_inr,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'
                  AND status = 'Won - PO Received'), 0)             AS won_value_inr,
+        -- Quoted minus won would count Lost as open.
+        COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'
+                 AND status IN (${OPEN_QUOTATION_SQL})), 0) AS open_value_inr,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received'
                  AND project_id IS NULL)::int                      AS won_without_project
       FROM ${src.vQuotations} q`, ownerParams),

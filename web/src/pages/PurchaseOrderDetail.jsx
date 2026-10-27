@@ -405,7 +405,7 @@ export default function PurchaseOrderDetail() {
             />
             <RecordStat label="Billed" value={amount(po.total_invoiced)} detail={`of ${amount(po.po_value)} ordered`} />
             <RecordStat
-              label="Received"
+              label="Received (incl. TDS)"
               value={amount(po.total_received)}
               detail={`${amount(Number(po.po_value) - Number(po.total_received))} still to come`}
               tone={Number(po.total_received) >= Number(po.po_value) - 0.5 && Number(po.po_value) > 0 ? 'settled' : undefined}
@@ -506,7 +506,7 @@ export default function PurchaseOrderDetail() {
           {stages.length > 0 && (
             <div className="flex h-11 flex-wrap items-center gap-6 border-t border-border bg-secondary px-5 text-[12.5px] text-secondary-text">
               <span>Invoiced <strong className="mono font-medium text-foreground">{amount(po.total_invoiced)}</strong></span>
-              <span>Received <strong className="mono font-medium text-foreground">{amount(po.total_received)}</strong></span>
+              <span>Received (incl. TDS) <strong className="mono font-medium text-foreground">{amount(po.total_received)}</strong></span>
               <span>To bill now <strong className={cn('mono font-medium', Number(po.balance_to_bill) > 0 ? 'text-waiting' : 'text-foreground')}>{amount(po.balance_to_bill)}</strong></span>
               <span>Outstanding <strong className="mono font-medium text-foreground">{amount(Number(po.po_value) - Number(po.total_received))}</strong></span>
             </div>

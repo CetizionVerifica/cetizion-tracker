@@ -65,9 +65,21 @@ test('delivery follows the mode, the kill switch and the allowlist', () => {
 test('the reminder email totals the outstanding amounts and names every invoice', () => {
   const email = paymentReminder({ company: 'Hetero', contactName: 'Ravi', stages: [stage(), stage({ id: 2, invoice_no: 'CVPL/2026-27/13', amount_received: 40000 })], financeEmail: 'finance@cetizion.com' });
   assert.match(email.subject, /2 invoices due from Hetero/);
-  assert.match(email.text, /Total outstanding: ₹1,60,000/);
+  // The portal and the statement say the outstanding includes GST; the reminder says so too.
+  assert.match(email.text, /Total outstanding \(incl\. GST\): ₹1,60,000/);
+  assert.match(email.text, /outstanding incl\. GST, due/);
+  assert.match(email.html, /Outstanding \(incl\. GST\)/);
+  assert.match(email.html, /Total outstanding \(incl\. GST\):/);
   assert.match(email.text, /CVPL\/2026-27\/13/);
   assert.match(email.html, /finance@cetizion.com/);
+});
+
+test('an export (non-INR) reminder says outstanding, with no GST: exports are zero-rated', () => {
+  const email = paymentReminder({ company: 'Acme GmbH', stages: [stage({ currency: 'EUR', stage_amount: 1000 })] });
+  assert.doesNotMatch(email.text, /GST/);
+  assert.doesNotMatch(email.html, /GST/);
+  assert.match(email.text, /Total outstanding: /);
+  assert.match(email.text, / outstanding, due /);
 });
 
 test('the finance digest counts what is waiting', () => {
