@@ -34,7 +34,7 @@ import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { companyNameFromEmail, mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings, keepDropped, ownerFor, processCandidates, runContext } from './autoEnquiry.js';
 import { PO_KEY_FIELDS, PO_SCHEMA, buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
-import { checkPo, grossUp, rankPoPdfs, stagesFor } from './pdfPurchaseOrder.js';
+import { checkPo, grossUp, isExport, rankPoPdfs, stagesFor } from './pdfPurchaseOrder.js';
 import { near } from './pdfQuotation.js';
 import { disagreeNote, fieldsDiffer, readWithAi } from './readAttachment.js';
 import { notFor, triage } from './triage.js';
@@ -352,7 +352,7 @@ export function valueAgrees(po, q, tolerancePercent, lines = []) {
   const qSub = Number(q.subtotal) || null;
   if (po.total_value && within(po.total_value, qTotal)) return true;
   if (po.basic_value && within(po.basic_value, qSub)) return true;
-  if (!po.total_value && po.basic_value && !qSub && within(grossUp(po.basic_value, lines), qTotal)) return true;
+  if (!po.total_value && po.basic_value && !qSub && within(grossUp(po.basic_value, lines, q.currency), qTotal)) return true;
   return false;
 }
 
@@ -546,8 +546,9 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
 
   // ---- the value, the stages and what the PO itself said
   const { rows: qLines } = await db.query('SELECT amount, gst_rate FROM quotation_lines WHERE quotation_id = $1', [quotation.id]);
-  const grossed = !po.total_value;
-  const poValue = grossed ? grossUp(po.basic_value, qLines) : po.total_value;
+  const currency = po.currency || quotation.currency;
+  const grossed = !po.total_value && !isExport(currency);
+  const poValue = po.total_value || grossUp(po.basic_value, qLines, currency);
   const { rows: [qTerms] } = await db.query('SELECT terms FROM quotations WHERE id = $1', [quotation.id]);
   const terms = stagesFor(po.payment_terms_text, qTerms?.terms);
   const day = istDay(m.sent_at);
@@ -624,7 +625,7 @@ export async function changedFrom(db, poNumber, po) {
        FROM purchase_orders po WHERE po.po_number = $1`, [poNumber]);
   if (!r) return null;
   // Grossed up at the quotation's own GST rates, as registration did, not the default 18%.
-  const value = po.total_value ?? (po.basic_value !== null ? grossUp(po.basic_value, r.q_lines || []) : null);
+  const value = po.total_value ?? (po.basic_value !== null ? grossUp(po.basic_value, r.q_lines || [], po.currency || r.currency) : null);
   const valueDiffers = value !== null && !near(r.po_value, value) && !(po.basic_value !== null && near(r.po_value, po.basic_value));
   const had = (r.values || []).filter((v) => v !== null);
   const lines = po.linesOk && r.lines_from_po ? po.lines.map((l) => Number(l.amount)) : null;
@@ -671,9 +672,12 @@ async function quotationFromPo(db, account, cand, po, company) {
   const day = istDay(m.sent_at);
 
   // The tax rate the PO implies, else 18%; the lines carry the PO's own split.
-  const basic = po.basic_value ?? (po.tax_value !== null && po.total_value ? round2(po.total_value - po.tax_value) : round2(po.total_value / 1.18));
+  // An export (not in INR) is zero-rated: no GST, the lines carry the whole value.
+  const exported = isExport(po.currency);
+  const basic = po.basic_value ?? (exported ? po.total_value
+    : po.tax_value !== null && po.total_value ? round2(po.total_value - po.tax_value) : round2(po.total_value / 1.18));
   const tax = po.tax_value ?? (po.gst_extra ? null : (po.total_value ? round2(po.total_value - basic) : null));
-  const gstRate = basic > 0 && tax !== null ? Math.round((tax / basic) * 10000) / 100 : 18;
+  const gstRate = exported ? 0 : basic > 0 && tax !== null ? Math.round((tax / basic) * 10000) / 100 : 18;
   // The lines carry the basic value. Lines that add up to the total
   // instead (a PO printing no basic value) are scaled down to it, or the
   // tax would be added twice.

@@ -31,7 +31,9 @@ export function quotationDocument(q) {
   // fullQuotation; this only prints it, and falls back to the stored total
   // for a quotation loaded without it (an old revision snapshot).
   const gst = q.gst || null;
-  const taxRows = gst && gst.bands?.length
+  // An export (not in INR) is zero-rated: no GST on any line, whatever rate it carries.
+  const zeroRated = cur.toUpperCase() !== 'INR';
+  const taxRows = zeroRated ? [['Zero-rated (export)', money(0, cur)]] : gst && gst.bands?.length
     ? gst.bands.flatMap((b) => (b.intra
       ? [[`CGST @ ${half(b.rate)}%`, money(b.cgst, cur)], [`SGST @ ${half(b.rate)}%`, money(b.sgst, cur)]]
       : [[`IGST @ ${trim(b.rate)}%`, money(b.igst, cur)]]))
@@ -46,7 +48,7 @@ export function quotationDocument(q) {
     { text: `${Number(l.qty)} ${l.unit || ''}`.trim(), alignment: 'right' },
     { text: money(l.rate, cur), alignment: 'right' },
     { text: Number(l.discount_percent) ? `${Number(l.discount_percent)}%` : '', alignment: 'right', color: MUTED },
-    { text: `${Number(l.gst_rate)}%`, alignment: 'right', color: MUTED },
+    { text: `${zeroRated ? 0 : Number(l.gst_rate)}%`, alignment: 'right', color: MUTED },
     { text: money(l.amount, cur), alignment: 'right' },
   ]);
   const totals = hasLines

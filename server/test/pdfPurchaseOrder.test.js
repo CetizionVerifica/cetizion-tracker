@@ -117,6 +117,12 @@ test('grossUp adds GST at the quotation lines\' own rates, else 18%', () => {
   assert.equal(grossUp(250000), 295000);
   assert.equal(grossUp(110000, [{ amount: 100000, gst_rate: 18 }, { amount: 10000, gst_rate: 5 }]), 128500);
   assert.equal(grossUp(55000, [{ amount: 100000, gst_rate: 18 }, { amount: 10000, gst_rate: 5 }]), 64250, 'a partial PO at the same mix');
+  assert.equal(grossUp(250000, [], 'INR'), 295000);
+});
+
+test('grossUp adds nothing to an export: not in INR, it is zero-rated', () => {
+  assert.equal(grossUp(10000, [], 'USD'), 10000);
+  assert.equal(grossUp(10000, [{ amount: 10000, gst_rate: 18 }], 'eur'), 10000, 'whatever rate the lines show');
 });
 
 test('stagesFromTerms reads the common shapes, and leaves the rest to the template', () => {

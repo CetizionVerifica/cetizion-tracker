@@ -121,7 +121,7 @@ poReviewRouter.post('/review/:id/register', async (req, res) => {
       prefill: {
         po_number: v.po_number, po_date: v.po_date, currency: v.currency || 'INR',
         // Including GST, as the tracker counts it.
-        po_value: v.total_value ?? (v.basic_value ? grossUp(v.basic_value) : null),
+        po_value: v.total_value ?? (v.basic_value ? grossUp(v.basic_value, [], v.currency || 'INR') : null),
         payment_terms_days: v.credit_days ?? 30, payment_terms_text: v.payment_terms_text,
         stages: terms.source === 'po_terms' ? terms.stages : null,
         project_manager: v.project_manager?.name || null, project_manager_email: v.project_manager?.email || null,

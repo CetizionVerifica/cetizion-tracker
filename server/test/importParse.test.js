@@ -314,3 +314,87 @@ test('a column written month first is read month first, judged per way of writin
   // "24.02.2026" is day first; the slashes in the same column are not decided by it.
   assert.deepEqual(rows.map((r) => r['PO Date']), ['2026-02-24', '2026-12-03', null]);
 });
+
+// An amount the sheet says is before GST is grossed up: the tracker's PO and
+// quotation values include GST. Exports (non-INR) are zero-rated, so kept.
+const gstLive = { quotations: [], purchase_orders: [], projects: [], services: [], stages: [], next_quotation_no: 1, next_project_no: 1, year: 2026 };
+const gstPlan = (header, cell, extra = {}) => {
+  const mapping = { client: 'Client', stage: 'Stage', service: 'Service', po_number: 'PO', po_amount: header, ...extra.mapping };
+  const rows = [{ __row: 2, Client: 'Hetero', Stage: 'Won - PO Received', Service: 'ASI audit', PO: 'PO-1', [header]: cell, ...extra.row }];
+  const plan = buildPlan({ rows, mapping, live: gstLive });
+  return { q: plan.items.find((it) => it.step === 'quotation'), po: plan.items.find((it) => it.step === 'purchase_order') };
+};
+
+test('a header that says the amount excludes GST: INR is stored with GST added, and says so', () => {
+  assert.equal(heuristicMapping(['Client', 'Deal Stage', 'Contract Amount (excl. GST)']).po_amount, 'Contract Amount (excl. GST)');
+  const { q, po } = gstPlan('Contract Amount (excl. GST)', 100000);
+  assert.equal(po.payload.po_value, 118000);
+  assert.equal(q.payload.quotation_value, 118000);
+  const flag = po.flags.find((f) => f.code === 'amount_excl_gst');
+  assert.equal(flag.level, 'warn');
+  assert.match(flag.message, /1,00,000 \+ GST.*1,18,000 incl\. GST/);
+  assert.ok(q.flags.some((f) => f.code === 'amount_excl_gst'));
+});
+
+test('a cell written "8,111 + GST" in rupees is grossed up, not read as the inclusive value', () => {
+  const { q, po } = gstPlan('PO Amount', '8,111 + GST');
+  assert.equal(po.payload.po_value, 9570.98);
+  assert.equal(q.payload.quotation_value, 9570.98);
+  assert.match(po.flags.find((f) => f.code === 'amount_excl_gst').message, /8,111 \+ GST.*9,570\.98 incl\. GST/);
+  // Not also flagged as a misread amount: the GST note quotes the cell.
+  assert.ok(!po.flags.some((f) => f.code === 'amount_reinterpreted'));
+  // A rate in the cell is the rate used.
+  assert.equal(gstPlan('PO Amount', '10,000 + 12% GST').po.payload.po_value, 11200);
+});
+
+test('a dollar amount "+ GST" is an export, zero-rated: kept as it is', () => {
+  const { po } = gstPlan('PO Amount', 'USD 8,111 + GST');
+  assert.equal(po.payload.po_value, 8111);
+  assert.equal(po.payload.currency, 'USD');
+  assert.ok(!po.flags.some((f) => f.code === 'amount_excl_gst'));
+  // The cell said more than an amount, so it is still shown as read, plainly.
+  assert.equal(po.flags.find((f) => f.code === 'amount_reinterpreted').message, 'Sheet says "USD 8,111 + GST"; read as 8111. Confirm with sales');
+});
+
+test('an amount with nothing said about GST is taken as including it, unchanged', () => {
+  for (const [h, v] of [['PO Amount', 100000], ['PO Amount', '1,00,000/-'], ['Contract Amount (incl. GST)', 100000]]) {
+    const { po } = gstPlan(h, v);
+    assert.equal(po.payload.po_value, 100000, `${h}: ${v}`);
+    assert.ok(!po.flags.some((f) => f.code === 'amount_excl_gst'));
+  }
+});
+
+test('a total already including GST is not grossed up again', () => {
+  // The figure stored is the first amount in the cell, exactly as read.
+  for (const [h, v, read] of [
+    ['PO Amount', '1,18,000 (1,00,000 + GST)', 118000],
+    ['PO Amount', '8,111 + GST = 9,571', 8111],
+    ['PO Amount', '1,18,000 incl. GST', 118000],
+    ['PO Amount', 'Total 1,18,000 + GST', 118000],
+    ['Total (Basic + GST)', 118000, 118000],
+    ['Amount + GST', 118000, 118000],
+    ['Total incl. GST', 118000, 118000],
+    ['Total (excl. GST)', 118000, 118000],
+    ['Contract Amount (excl. GST)', '1,18,000 incl. GST', 118000],
+  ]) {
+    const { po } = gstPlan(h, v);
+    assert.equal(po.payload.po_value, read, `${h}: ${v}`);
+    assert.ok(!po.flags.some((f) => f.code === 'amount_excl_gst'), `${h}: ${v}`);
+  }
+});
+
+test('the rate written in the cell wins over the header, which wins over 18%', () => {
+  assert.equal(gstPlan('Fee (excl. 12% GST)', '10,000 + GST').po.payload.po_value, 11200);
+  assert.equal(gstPlan('Fee (excl. 12% GST)', 10000).po.payload.po_value, 11200);
+  assert.equal(gstPlan('Fee (excl. 12% GST)', '10,000 + 5% GST').po.payload.po_value, 10500);
+});
+
+test('IGST, CGST + SGST and "GST 18% extra" are GST too; a 0% rate changes nothing', () => {
+  assert.equal(gstPlan('PO Amount', '10,000 + IGST').po.payload.po_value, 11800);
+  assert.equal(gstPlan('PO Amount', '10,000 + CGST + SGST').po.payload.po_value, 11800);
+  assert.equal(gstPlan('PO Amount', '10,000 + 9% CGST + 9% SGST').po.payload.po_value, 11800);
+  assert.equal(gstPlan('PO Amount', '10,000 GST 18% extra').po.payload.po_value, 11800);
+  const zero = gstPlan('PO Amount', '10,000 + 0% GST').po;
+  assert.equal(zero.payload.po_value, 10000);
+  assert.ok(!zero.flags.some((f) => f.code === 'amount_excl_gst'));
+});
