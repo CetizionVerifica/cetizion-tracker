@@ -210,7 +210,9 @@ export async function portalActions(companyId) {
 export async function ownedInvoices(companyId, stageIds, poNumber) {
   const ids = [...new Set(stageIds)];
   const { rows } = ids.length ? await query(
-    `SELECT s.id, s.po_number, s.invoice_no FROM payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number
+    `SELECT s.id, s.po_number, s.invoice_no,
+            GREATEST(ROUND(po.po_value * s.stage_percent, 2) - s.amount_received, 0) AS outstanding, po.currency
+       FROM payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number
        JOIN projects p ON p.project_id = po.project_id
       WHERE s.id = ANY($2::int[]) AND p.company_id = $1 AND s.invoice_no IS NOT NULL`, [companyId, ids]) : { rows: [] };
   if (rows.length !== ids.length) return null;

@@ -3,6 +3,7 @@ import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
+import { advicePrefill, cashAfterTds, isSettled, settledBy } from '../lib/receiptTds.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
 function useAction({ onDone, successMessage }) {
@@ -152,9 +153,16 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
 export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
   const outstanding = Math.max(Number(stage.stage_amount || 0) - Number(stage.amount_received || 0), 0);
   // One invoice: what the client said they paid. Several: this invoice's outstanding, to adjust.
+  // Either way, held to the outstanding once TDS is counted (it settles as cash does).
   const single = advice && advice.invoices.length === 1;
-  const [amount, setAmount] = useState(String(single ? Number(advice.amount) : outstanding));
-  const [tds, setTds] = useState(single && Number(advice.tds_amount) > 0 ? String(Number(advice.tds_amount)) : '');
+  const fromAdvice = single ? advicePrefill(advice, outstanding) : null;
+  // null: the outstanding less whatever TDS is typed, until somebody edits it.
+  const [amount, setAmount] = useState(fromAdvice ? String(fromAdvice.amount) : null);
+  const [tds, setTds] = useState(fromAdvice?.tds ? String(fromAdvice.tds) : '');
+  const cash = amount ?? String(cashAfterTds(outstanding, tds));
+  // An advice on an invoice with nothing left to receive would record nothing
+  // (or be refused): it is settled from the advice list instead.
+  const stale = Boolean(advice) && isSettled(outstanding);
   const [mode, setMode] = useState('bank_transfer');
   const [reference, setReference] = useState(advice?.reference || '');
   const [paidOn, setPaidOn] = useState(advice?.paid_on?.slice(0, 10) || today());
@@ -165,7 +173,7 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
     // A receipt row (#27): what came in now, plus any TDS the client deducted.
     const ok = await run(() =>
       api.action(`/payment-stages/${stage.id}/payment`, {
-        amount_received: Number(amount),
+        amount_received: Number(cash),
         tds_amount: tds ? Number(tds) : 0,
         payment_mode: mode,
         reference,
@@ -186,7 +194,13 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
       busy={busy}
       error={error}
       submitLabel="Save payment"
+      submitDisabled={stale}
     >
+      {stale && (
+        <Alert tone="warning">
+          This invoice is already settled, so there is no receipt to record. Resolve or reject the payment advice instead.
+        </Alert>
+      )}
       {advice && (
         <Alert tone="info">
           {advice.company_name} reported {money(advice.amount, stage.currency)}{Number(advice.tds_amount) > 0 ? ` + TDS ${money(advice.tds_amount, stage.currency)}` : ''} paid on {date(advice.paid_on)}
@@ -199,13 +213,13 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
         <strong>{money(outstanding, stage.currency)}</strong>
       </Alert>
       <Field label="Amount received now" required error={fieldErrors.amount_received}>
-        <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+        <Input type="number" min="0" step="0.01" value={cash} onChange={(e) => setAmount(e.target.value)} autoFocus />
       </Field>
       <Field label="Received on" error={fieldErrors.payment_received_date}>
         <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
       </Field>
       <div className="form-grid">
-        <Field label="TDS deducted" hint="Counts as settled">
+        <Field label="TDS deducted" hint="Counts as settled" error={fieldErrors.tds_amount}>
           <Input type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} />
         </Field>
         <Field label="Mode">
@@ -217,6 +231,12 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
           </Field>
         </div>
       </div>
+      {Number(tds) > 0 && (
+        <div className="small muted">
+          Settles {money(settledBy(cash, tds), stage.currency)}: {money(Number(cash || 0), stage.currency)} received + TDS {money(Number(tds), stage.currency)}
+          {settledBy(cash, tds) > outstanding + 0.01 ? `, more than the ${money(outstanding, stage.currency)} outstanding` : ''}.
+        </div>
+      )}
     </ActionModal>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { cashAfterTds, settledBy } from '../lib/receiptTds.js';
 
 /**
  * The client portal (#47): a few plain pages for a client contact, outside
@@ -392,6 +393,9 @@ function Answer({ kind, invoices = [], invoice, about, title, onClose, onDone })
   const picked = invoices.filter((i) => ids.includes(i.id));
   const cur = picked[0]?.currency || invoice?.currency || 'INR';
   const due = Math.round(picked.reduce((sum, i) => sum + Number(i.outstanding || 0), 0) * 100) / 100;
+  // TDS settles the invoice as the payment does, so until the client edits
+  // it the amount paid is what is outstanding less the TDS they enter.
+  const paid = amount ?? (cashAfterTds(due, tds) || '');
 
   async function go(e) {
     e.preventDefault(); setState({ busy: true });
@@ -399,7 +403,7 @@ function Answer({ kind, invoices = [], invoice, about, title, onClose, onDone })
       let r;
       if (kind === 'payment_advice') {
         const form = new FormData();
-        form.set('kind', kind); form.set('stage_ids', ids.join(',')); form.set('amount', String(amount ?? due));
+        form.set('kind', kind); form.set('stage_ids', ids.join(',')); form.set('amount', String(paid));
         if (tds) form.set('tds_amount', tds);
         form.set('paid_on', paidOn);
         if (reference) form.set('reference', reference);
@@ -465,13 +469,13 @@ function Answer({ kind, invoices = [], invoice, about, title, onClose, onDone })
         </fieldset>
       )}
       <div className="portal__grid">
-        <label>Amount paid<input className="input" type="number" min="0.01" step="0.01" required value={amount ?? (due || '')} onChange={(e) => setAmount(e.target.value)} /></label>
+        <label>Amount paid<input className="input" type="number" min="0.01" step="0.01" required value={paid} onChange={(e) => setAmount(e.target.value)} /></label>
         <label>TDS deducted<input className="input" type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} placeholder="0" /></label>
         <label>Paid on<input className="input" type="date" required value={paidOn} max={localToday()} onChange={(e) => setPaidOn(e.target.value)} /></label>
         <label>Reference<input className="input" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={120} placeholder="UTR or cheque number" /></label>
       </div>
       <label>Remittance advice (optional)<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(e) => setChosen(e.target.files[0] || null)} /></label>
-      <span className="accept__muted">Outstanding on {picked.length === 1 ? 'this invoice' : 'these invoices'}: {exact(due, cur)}. Our finance team checks the payment, then updates the invoice.</span>
+      <span className="accept__muted">Outstanding on {picked.length === 1 ? 'this invoice' : 'these invoices'}: {exact(due, cur)}.{Number(tds) > 0 && <> This settles {exact(settledBy(paid, tds), cur)}: {exact(Number(paid || 0), cur)} paid + TDS {exact(Number(tds), cur)}.</>} Our finance team checks the payment, then updates the invoice.</span>
       {actions('Send')}
     </form>
   );
