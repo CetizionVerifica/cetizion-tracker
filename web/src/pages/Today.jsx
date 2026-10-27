@@ -279,7 +279,7 @@ function Rail({ finance, sales, travel, visits }) {
           <h3 className={SECTION}>At a glance</h3>
           {[
             ['Left to collect', finance.outstanding, Number(finance.outstanding) > 0 ? 'text-late' : 'text-foreground'],
-            ['Open pipeline', Number(sales.value_inr) - Number(sales.won_value_inr), 'text-foreground'],
+            ['Open pipeline', sales.open_value_inr, 'text-foreground'],
             ['Travel cost', travel.total_cost, 'text-foreground'],
           ].map(([label, value, tone]) => (
             <div key={label} className="flex justify-between gap-3 text-[13px] text-secondary-text">
