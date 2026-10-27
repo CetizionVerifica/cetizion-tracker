@@ -1,0 +1,182 @@
+{
+  "intro": "The information we need for a formal application and an accurate quotation. Please complete it in detail. Everything you tell us is treated with strict confidentiality.",
+  "steps": [
+    {
+      "key": "application",
+      "title": "Your application",
+      "questions": [
+        {
+          "key": "application_type", "type": "radio", "label": "What are you applying for?", "required": true,
+          "options": [
+            { "key": "new_registration", "label": "New customer: a new registration" },
+            { "key": "transfer", "label": "New customer: transfer of registration from another certification body" },
+            { "key": "extend_scope", "label": "Existing customer: extend the scope of your current registration" },
+            { "key": "add_standard", "label": "Existing customer: add a new standard to your registration" }
+          ]
+        },
+        {
+          "key": "standards", "type": "checkbox", "label": "Standard(s) applicable", "required": true,
+          "options": [
+            { "key": "iso_9001", "label": "ISO 9001 Quality management" },
+            { "key": "iso_22000", "label": "ISO 22000 Food safety management" },
+            { "key": "iso_50001", "label": "ISO 50001 Energy management" },
+            { "key": "iso_27001", "label": "ISO 27001 Information security management" },
+            { "key": "iso_37001", "label": "ISO 37001 Anti-bribery management" },
+            { "key": "iso_45001", "label": "ISO 45001 Occupational health and safety management" },
+            { "key": "iso_39001", "label": "ISO 39001 Road traffic safety management" },
+            { "key": "other", "label": "Another standard" }
+          ]
+        },
+        { "key": "standards_other", "type": "text", "label": "Which other standard?", "required": true, "show_if": { "key": "standards", "op": "eq", "value": "other" } },
+        {
+          "key": "audit_frequency", "type": "radio", "label": "Audit frequency",
+          "options": [{ "key": "annual", "label": "Every 12 months" }]
+        },
+        {
+          "key": "integration", "type": "checkbox", "label": "If you apply for more than one standard: how integrated are your management systems?",
+          "help": "Tick each that applies.",
+          "options": [
+            { "key": "management_reviews", "label": "Management reviews that consider the overall business strategy and plan" },
+            { "key": "internal_audits", "label": "Integrated management approach to internal audits" },
+            { "key": "policy_objectives", "label": "Integrated policy and objectives" },
+            { "key": "system_processes", "label": "Integrated approach to systems processes" },
+            { "key": "improvement", "label": "Integrated approach to improvement mechanisms" },
+            { "key": "management_support", "label": "Integrated management support and responsibilities" }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "company",
+      "title": "Company data",
+      "questions": [
+        { "key": "legal_name", "type": "text", "label": "Name and legal form", "required": true, "prefill": "company.name" },
+        { "key": "address", "type": "textarea", "label": "Address", "required": true, "prefill": "company.address" },
+        { "key": "vat_number", "type": "text", "label": "VAT / GST number", "prefill": "company.gstin" },
+        { "key": "website", "type": "text", "label": "Website" },
+        { "key": "representative", "type": "text", "label": "Representative person", "required": true, "prefill": "contact.name" },
+        { "key": "office_phone", "type": "text", "label": "Office phone" },
+        { "key": "mobile_phone", "type": "text", "label": "Mobile phone", "prefill": "contact.phone" },
+        { "key": "email", "type": "text", "label": "Email", "required": true, "prefill": "contact.email" },
+        { "key": "billing_different", "type": "yesno", "label": "Is the billing information different from the above?" },
+        { "key": "billing_info", "type": "textarea", "label": "Billing information", "required": true, "show_if": { "key": "billing_different", "op": "eq", "value": true } }
+      ]
+    },
+    {
+      "key": "scope",
+      "title": "Scope and sites",
+      "questions": [
+        { "key": "certificate_scope", "type": "textarea", "label": "Scope of certification: what wording would you like to see on your certificate?", "required": true },
+        { "key": "employee_count", "type": "number", "label": "How many full-time employees are involved in the scope applied for?", "required": true, "integer": true, "min": 1 },
+        {
+          "key": "sites", "type": "table", "label": "Sites", "help": "One row per site in the scope. Add a row for each additional location.", "required": true, "min_rows": 1, "max_rows": 50,
+          "columns": [
+            { "key": "address", "type": "text", "label": "Site address", "required": true },
+            { "key": "employees", "type": "number", "label": "Number of employees", "required": true, "integer": true, "min": 0 },
+            { "key": "shifts", "type": "number", "label": "Number of shifts", "integer": true, "min": 1 },
+            { "key": "function", "type": "text", "label": "Function" }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "organisation",
+      "title": "About your organisation",
+      "description": "Further questions appear here for each standard you chose.",
+      "questions": [
+        { "key": "previously_certified", "type": "yesno", "label": "Do you currently hold a valid certificate from another certification body or organisation?", "required": true },
+        { "key": "current_certificate", "type": "textarea", "label": "Which certificate, from which body, and valid until when?", "show_if": { "key": "previously_certified", "op": "eq", "value": true } },
+        { "key": "outsourced_processes", "type": "textarea", "label": "Processes outsourced to subcontractors (if applicable)" },
+        { "key": "consultant", "type": "text", "label": "Consultant (if applicable)" },
+        { "key": "legal_requirements", "type": "textarea", "label": "Legal requirements applicable to your organisation and its products or services", "help": "One per line." },
+
+        { "key": "food_safety_heading", "type": "info", "label": "Food safety management (ISO 22000)", "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" } },
+        { "key": "haccp_count", "type": "number", "label": "Number of HACCPs", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" } },
+        { "key": "process_lines", "type": "number", "label": "Number of process lines", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" } },
+        { "key": "food_category", "type": "text", "label": "Food category", "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" } },
+        { "key": "food_subcategory", "type": "text", "label": "Food subcategory", "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" } },
+        { "key": "prp_list", "type": "textarea", "label": "List of PRPs", "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" } },
+        {
+          "key": "food_activities", "type": "checkbox", "label": "Does your company perform any of the following?", "show_if": { "key": "standards", "op": "eq", "value": "iso_22000" },
+          "options": [
+            { "key": "product_development", "label": "In-house product development" },
+            { "key": "laboratory_testing", "label": "In-house laboratory testing" }
+          ]
+        },
+
+        { "key": "energy_heading", "type": "info", "label": "Energy management (ISO 50001)", "show_if": { "key": "standards", "op": "eq", "value": "iso_50001" } },
+        { "key": "enms_personnel", "type": "number", "label": "Number of effective personnel involved with the EnMS", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_50001" } },
+        { "key": "energy_use_tj", "type": "number", "label": "Total amount of energy use, in TJ", "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_50001" } },
+        { "key": "energy_sources", "type": "number", "label": "Number of energy sources", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_50001" } },
+        { "key": "significant_energy_uses", "type": "number", "label": "Number of significant energy uses (e.g. ventilation, production line, heating)", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_50001" } },
+
+        { "key": "information_security_heading", "type": "info", "label": "Information security management (ISO 27001)", "help": "Classified information the auditors cannot access may affect the certification process.", "show_if": { "key": "standards", "op": "eq", "value": "iso_27001" } },
+        { "key": "sensitive_information", "type": "textarea", "label": "List of confidential or sensitive information (if applicable)", "show_if": { "key": "standards", "op": "eq", "value": "iso_27001" } },
+        { "key": "statement_of_applicability", "type": "file", "label": "Statement of applicability, if available", "show_if": { "key": "standards", "op": "eq", "value": "iso_27001" } },
+
+        { "key": "anti_bribery_heading", "type": "info", "label": "Anti-bribery management (ISO 37001)", "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+        {
+          "key": "business_category", "type": "checkbox", "label": "Which category does your business belong to?", "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" },
+          "options": [
+            { "key": "construction", "label": "Construction" },
+            { "key": "finance", "label": "Finance" },
+            { "key": "extraction", "label": "Extraction" },
+            { "key": "transport", "label": "Transport" }
+          ]
+        },
+        { "key": "finance_staff", "type": "number", "label": "Number of people who work permanently in the company's financial services", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+        { "key": "bid_staff", "type": "number", "label": "Number of people involved in preparing offers for customers or bids for tenders", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+        { "key": "procurement_staff", "type": "number", "label": "Number of people involved in procurement or purchasing", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+        { "key": "partner_contact_staff", "type": "number", "label": "Number of people involved in communication with subcontractors or customers", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+        { "key": "donations", "type": "textarea", "label": "Donations your organisation has made in the last two years", "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+        { "key": "bribery_conviction", "type": "yesno", "label": "Has any member of the company's ownership or board of directors been irrevocably convicted of an offence related to bribery?", "required": true, "show_if": { "key": "standards", "op": "eq", "value": "iso_37001" } },
+
+        { "key": "health_safety_heading", "type": "info", "label": "Occupational health and safety management (ISO 45001)", "show_if": { "key": "standards", "op": "eq", "value": "iso_45001" } },
+        { "key": "key_hazards", "type": "textarea", "label": "The key hazards and OH&S risks associated with your processes", "show_if": { "key": "standards", "op": "eq", "value": "iso_45001" } },
+        { "key": "hazardous_materials", "type": "textarea", "label": "The main hazardous materials used in your processes", "show_if": { "key": "standards", "op": "eq", "value": "iso_45001" } },
+        { "key": "ohs_legal_obligations", "type": "textarea", "label": "Relevant legal obligations from the applicable OH&S legislation", "show_if": { "key": "standards", "op": "eq", "value": "iso_45001" } },
+
+        { "key": "road_safety_heading", "type": "info", "label": "Road traffic safety management (ISO 39001)", "show_if": { "key": "standards", "op": "eq", "value": "iso_39001" } },
+        { "key": "road_accidents", "type": "textarea", "label": "Road safety accidents that have occurred in your organisation in the past", "show_if": { "key": "standards", "op": "eq", "value": "iso_39001" } },
+        { "key": "road_safety_legislation", "type": "textarea", "label": "Specific road safety legislation that applies to your company", "show_if": { "key": "standards", "op": "eq", "value": "iso_39001" } },
+        {
+          "key": "vehicles", "type": "table", "label": "The type and number of vehicles your organisation has", "help": "One row per type: passenger cars, commercial vehicles, trucks over 3.5 tons, self-propelled or lifting baskets, project-specific machinery, two-wheelers, patrol or direct-action vehicles, buses, bicycles, others.", "max_rows": 20,
+          "show_if": { "key": "standards", "op": "eq", "value": "iso_39001" },
+          "columns": [
+            {
+              "key": "vehicle_type", "type": "select", "label": "Type", "required": true,
+              "options": [
+                { "key": "passenger_cars", "label": "Passenger cars" },
+                { "key": "commercial_vehicles", "label": "Commercial vehicles" },
+                { "key": "trucks_over_3_5_t", "label": "Trucks over 3.5 tons" },
+                { "key": "lifting_baskets", "label": "Self-propelled / lifting baskets" },
+                { "key": "project_machinery", "label": "Project-specific machinery" },
+                { "key": "two_wheelers", "label": "Two-wheelers" },
+                { "key": "patrol_cars", "label": "Patrol cars / direct-action vehicles" },
+                { "key": "buses", "label": "Buses" },
+                { "key": "bicycles", "label": "Bicycles" },
+                { "key": "others", "label": "Others" }
+              ]
+            },
+            { "key": "count", "type": "number", "label": "Number", "required": true, "integer": true, "min": 0 }
+          ]
+        },
+        { "key": "driving_licences", "type": "number", "label": "Number of driving licences", "integer": true, "min": 0, "show_if": { "key": "standards", "op": "eq", "value": "iso_39001" } }
+      ]
+    },
+    {
+      "key": "documents",
+      "title": "Documents and confirmation",
+      "questions": [
+        { "key": "proof_of_existence", "type": "file", "label": "Proof of company existence (certificate of incorporation or equivalent)" },
+        { "key": "other_certificates", "type": "file", "label": "Other valid certificates from another certification body or organisation", "multiple": true, "show_if": { "key": "previously_certified", "op": "eq", "value": true } },
+        { "key": "quality_manual", "type": "file", "label": "Quality manual (optional)" },
+        { "key": "signatory_position", "type": "text", "label": "Your position", "required": true },
+        {
+          "key": "confirmation", "type": "checkbox", "label": "Confirmation", "required": true,
+          "options": [{ "key": "accurate", "label": "I confirm the above data are accurate and valid" }]
+        }
+      ]
+    }
+  ]
+}

@@ -63,6 +63,9 @@ export default function TravelLogs() {
       title="Trips"
       subtitle="HR logs each trip once — its legs, the vendor's bills and employee claims attach to the travel ID"
       resource="travel-logs"
+      // The date picker filters ?from=&to= on travel_start_date: the day the trip begins.
+      dateFilterLabel="Travel date"
+      dateRange
       columns={columns}
       // The trip is where its legs, vendor bills and employee claims meet, so
       // the row opens the trip rather than a form over the list.

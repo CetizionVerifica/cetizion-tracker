@@ -12,6 +12,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SettingsPane } from './SettingsArea.jsx';
 import { AutoEntryPanel } from '../components/AutoEntryPanel.jsx';
+import { DailyMisNotice, useMyDailyMis } from '../components/MyDailyMis.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, date, number } from '../lib/format.js';
@@ -40,7 +41,7 @@ import { useAuth } from '../lib/auth.jsx';
  * shyam@cetizionverifica.com wrapped mid-word in the first column.
  */
 const GRID = '@3xl:grid-cols-[minmax(0,1.8fr)_96px_180px_120px_88px]';
-const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const COL_LABEL = 'eyebrow';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
 const VIS = [
@@ -72,6 +73,7 @@ export default function Mailboxes() {
   const { isAdmin, user } = useAuth();
   const [params, setParams] = useSearchParams();
   const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
+  const myMis = useMyDailyMis();
   const block = useFetch(() => (isAdmin ? api.raw('/mailboxes/blocklist') : Promise.resolve(null)), [isAdmin]);
   const people = useFetch(() => (isAdmin ? api.users.list() : Promise.resolve(null)), [isAdmin]);
   const [pattern, setPattern] = useState('');
@@ -219,6 +221,9 @@ export default function Mailboxes() {
             it did not needs to sit there until somebody has acted on it. */}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}
 
+        {/* What connecting a personal mailbox means for the daily MIS (§B2). */}
+        <DailyMisNotice mine={myMis} always />
+
         {/* Both Connect buttons are dead until the server is set up, and a
             disabled button that does not say why is the thing this whole
             page exists to stop doing. */}
@@ -244,7 +249,7 @@ export default function Mailboxes() {
           </Alert>
         )}
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
             <span>Mailbox</span><span>Status</span><span>{isAdmin ? 'Team sees' : 'The tracker stores'}</span><span>Synced</span><span />
           </div>
@@ -416,7 +421,7 @@ export default function Mailboxes() {
         <AutoEntryPanel />
 
         {isAdmin && <div className="grid gap-4 @3xl:grid-cols-2">
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Never sync</div>
             <p className="text-[12.5px]/[1.6] text-secondary-text">
               Addresses or whole domains — newsletters, personal contacts. Robots like no-reply@ are always skipped.
@@ -443,7 +448,7 @@ export default function Mailboxes() {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {blocked.map((b) => (
-                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-[6px] border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
+                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-sm border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
                     {b.pattern}
                     <button
                       type="button"
@@ -459,7 +464,7 @@ export default function Mailboxes() {
             )}
           </div>
 
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Server setup</div>
             <Ready label="Microsoft Entra app" ok={Boolean(cfg?.microsoft)} okLabel="Registered" missing="Not registered" />
             <Ready label="Token encryption key" ok={Boolean(cfg?.token_key)} />
@@ -475,6 +480,7 @@ export default function Mailboxes() {
       {tuning && (
         <SyncSettingsDialog
           row={tuning}
+          isOwner={!tuning.is_shared && tuning.user_id != null && tuning.user_id === user?.id}
           onClose={() => setTuning(null)}
           onSaved={(message) => { setTuning(null); toast(message, 'success'); refetch(); }}
         />
@@ -544,12 +550,14 @@ export default function Mailboxes() {
  * the rarer, duller kind: set once when the mailbox is connected, and
  * almost never again.
  */
-function SyncSettingsDialog({ row, onClose, onSaved }) {
+function SyncSettingsDialog({ row, isOwner = false, onClose, onSaved }) {
   const toast = useToast();
   const [days, setDays] = useState(String(row.import_days ?? 30));
   const [internal, setInternal] = useState(!row.exclude_internal);
   const [contacts, setContacts] = useState(Boolean(row.auto_create_contacts));
   const [everyFolder, setEveryFolder] = useState(row.read_scope === 'all');
+  // The owner's own decision (mis-report-sender-plan.md §A3): an admin can then choose it as the reports' sender.
+  const [sendReports, setSendReports] = useState(Boolean(row.may_send_reports));
   const [busy, setBusy] = useState(false);
   const daysChanged = Number(days) !== Number(row.import_days ?? 30);
 
@@ -558,7 +566,7 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
     try {
       await api.raw(`/mailboxes/${row.id}`, {
         method: 'PATCH',
-        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts, read_scope: everyFolder ? 'all' : 'inbox_sent' },
+        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts, read_scope: everyFolder ? 'all' : 'inbox_sent', ...(isOwner ? { may_send_reports: sendReports } : {}) },
       });
       // Changing the window drops the sync cursor, so the older mail only
       // appears on the next pass. Saying "Saved" and leaving an unchanged
@@ -626,6 +634,18 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
             </span>
           </span>
         </label>
+
+        {isOwner && (
+          <label className="flex items-start gap-2 text-[13px]">
+            <input type="checkbox" className="mt-0.5" checked={sendReports} onChange={(e) => setSendReports(e.target.checked)} />
+            <span>
+              Allow scheduled reports to be sent from this mailbox
+              <span className="block text-[12px] text-muted-foreground">
+                Off by default. On lets an admin choose your mailbox to send the Daily Sales Briefing and the Weekly Sales MIS; they would go out from your address and sit in your Sent Items.
+              </span>
+            </span>
+          </label>
+        )}
       </div>
     </Modal>
   );
@@ -760,7 +780,7 @@ function AutoEnquiries() {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[14px] font-semibold text-foreground">Automatic enquiries, POs and invoices</div>
@@ -787,7 +807,7 @@ function AutoEnquiries() {
         </div>
       </div>
       {s.review_only && (
-        <div className="flex flex-col gap-2 rounded-[8px] border border-border p-3">
+        <div className="flex flex-col gap-2 rounded-md border border-border p-3">
           <p className="text-[12.5px]/[1.6] text-secondary-text">
             Review only: every PO and invoice the readers would register waits in review, saying what they would have done, so the new prompts can be checked against what you enter by hand.
             Turn automatic registration back on client by client here, then switch review only off.

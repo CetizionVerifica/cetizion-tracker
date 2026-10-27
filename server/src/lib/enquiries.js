@@ -1,6 +1,7 @@
 import { businessToday } from './businessDate.ts';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 import { ApiError } from '../middleware/error.js';
+import { ownerClause } from '../auth/ownership.js';
 import { claimNextId } from './sequences.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 
@@ -38,12 +39,37 @@ export function enquiryRuleErrors(before, after) {
 export async function saveEnquiry(client, ctx) {
   const fields = enquiryRuleErrors(ctx.before, ctx.after);
   if (fields) throw new ApiError(422, 'Please check the highlighted fields', { fields });
+  await assertQuotationReachable(client, ctx);
   // The contact's own details, onto the contact the trigger linked. Before
   // the quotation below, so a won enquiry's quotation inherits a contact
   // that already has an address (client-data-gaps.md, gap 1).
   assertEmailLooksReal(ctx.input?.contact_email);
   await saveContactDetails(client, ctx.after.contact_id, contactDetailsFrom(ctx.input));
   return quoteWonEnquiry(client, ctx);
+}
+
+/**
+ * An enquiry may be linked only to a quotation its saver can reach (#18),
+ * as linkProjectQuotation does for a project. The link is what makes a
+ * quotation this enquiry's sale, and the sales journey shows a sale to
+ * whoever owns its enquiry: without this, a sales user could type in a
+ * colleague's quotation number and follow that sale on their Journey board.
+ * A link that is not changing is left alone, so an enquiry an admin linked
+ * to someone else's quotation stays editable by its owner. Imports and MCP
+ * pass no scope and stay as unrestricted as they were.
+ */
+async function assertQuotationReachable(client, { before, after, scope }) {
+  const quotationNo = after.quotation_no;
+  if (!scope || !quotationNo || quotationNo === before?.quotation_no) return;
+  const params = [quotationNo];
+  const mine = ownerClause(scope, params, { alias: 'q' });
+  if (!mine) return;
+  const { rows } = await client.query(`SELECT 1 FROM quotations q WHERE q.quotation_no = $1 AND ${mine}`, params);
+  if (!rows.length) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { quotation_no: 'No quotation with that number' },
+    });
+  }
 }
 
 /** The services an enquiry asks for, one per line: the service picked, then any others typed. */
@@ -72,41 +98,8 @@ export async function quoteWonEnquiry(client, { before, after }) {
 
   // The quotation date inherits the enquiry's date (e.g. for historical enquiries),
   // falling back to today in the business time zone when blank.
-  const quotationDate = after.enquiry_date || businessToday();
-  const year = String(quotationDate).slice(0, 4);
-
-  // Two quotations created at the same moment must not be handed the same number.
-  // The quotation number year is strictly derived from the quotation's own date.
-  const quotationNo = await claimNextId('quotation', client, year);
-
-  // A Draft (#24): nothing has gone to the client yet. Sending it makes it Submitted.
+  const q = await insertDraftQuotation(client, after, { quotationDate: after.enquiry_date || businessToday() });
   const currency = after.currency || 'INR';
-  const { rows: [q] } = await client.query(
-    // owner_user_id comes from the enquiry, not from whoever happened to save
-    // it and not from the free-text sales_person beside it (#18 Phase 2C).
-    // The quotation is the same piece of work one step on, so responsibility
-    // carries across; an unowned enquiry makes an unowned quotation, which is
-    // the honest answer rather than a guess.
-    //
-    // Originating salesperson (#18 Phase 4): preserved only when the enquiry
-    // has a verified originating salesperson.
-    `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
-                             sector, sales_person, sales_person_email, quotation_date,
-                             status, remarks, quotation_value, currency, owner_user_id,
-                             originating_user_id, originating_user_snapshot_id, originating_user_name)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
-    [
-      quotationNo, after.client_name, after.contact_person, after.service || after.services_interested,
-      after.sector, after.sales_person, after.sales_person_email,
-      quotationDate, QUOTATION_STATUS.draft,
-      `From enquiry ${after.enquiry_no}`,
-      after.estimated_value ?? null, currency,
-      after.owner_user_id ?? null,
-      after.originating_user_id ?? null,
-      after.originating_user_id ? (after.originating_user_snapshot_id ?? after.originating_user_id) : null,
-      after.originating_user_id ? (after.originating_user_name ?? null) : null,
-    ]
-  );
 
   // A line per service asked for, filled from the catalogue: its rate when it
   // is priced in the quotation's currency, its GST, unit and description. A
@@ -123,6 +116,59 @@ export async function quoteWonEnquiry(client, { before, after }) {
       [q.id, s?.id ?? null, s?.description || s?.name || name, s?.unit ?? null, rate, s?.gst_rate ?? 18, i]
     );
   }
-  await client.query('UPDATE enquiries SET quotation_no = $1 WHERE id = $2', [quotationNo, after.id]);
-  return { quotation_created: quotationNo };
+  await client.query('UPDATE enquiries SET quotation_no = $1 WHERE id = $2', [q.quotation_no, after.id]);
+  return { quotation_created: q.quotation_no };
+}
+
+/**
+ * A Draft quotation for an enquiry, numbered, owned and attributed as the
+ * enquiry is: the same piece of work one step on. Shared by quoteWonEnquiry
+ * and by generating a quotation from questionnaire answers (#208 phase 2),
+ * so both create it the same way. It adds no lines and does not link the
+ * enquiry to it; the caller does both, in its own transaction.
+ *
+ * `quotationDate` decides the number's year. The rest default to what a
+ * converted enquiry carries. Returns { id, quotation_no }.
+ */
+export async function insertDraftQuotation(client, enquiry, {
+  quotationDate,
+  serviceQuoted = enquiry.service || enquiry.services_interested,
+  remarks = `From enquiry ${enquiry.enquiry_no}`,
+  value = enquiry.estimated_value ?? null,
+} = {}) {
+  const year = String(quotationDate).slice(0, 4);
+
+  // Two quotations created at the same moment must not be handed the same number.
+  // The quotation number year is strictly derived from the quotation's own date.
+  const quotationNo = await claimNextId('quotation', client, year);
+
+  // A Draft (#24): nothing has gone to the client yet. Sending it makes it Submitted.
+  const currency = enquiry.currency || 'INR';
+  const { rows: [q] } = await client.query(
+    // owner_user_id comes from the enquiry, not from whoever happened to save
+    // it and not from the free-text sales_person beside it (#18 Phase 2C).
+    // The quotation is the same piece of work one step on, so responsibility
+    // carries across; an unowned enquiry makes an unowned quotation, which is
+    // the honest answer rather than a guess.
+    //
+    // Originating salesperson (#18 Phase 4): preserved only when the enquiry
+    // has a verified originating salesperson.
+    `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
+                             sector, sales_person, sales_person_email, quotation_date,
+                             status, remarks, quotation_value, currency, owner_user_id,
+                             originating_user_id, originating_user_snapshot_id, originating_user_name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+    [
+      quotationNo, enquiry.client_name, enquiry.contact_person, serviceQuoted,
+      enquiry.sector, enquiry.sales_person, enquiry.sales_person_email,
+      quotationDate, QUOTATION_STATUS.draft,
+      remarks,
+      value, currency,
+      enquiry.owner_user_id ?? null,
+      enquiry.originating_user_id ?? null,
+      enquiry.originating_user_id ? (enquiry.originating_user_snapshot_id ?? enquiry.originating_user_id) : null,
+      enquiry.originating_user_id ? (enquiry.originating_user_name ?? null) : null,
+    ]
+  );
+  return { id: q.id, quotation_no: quotationNo };
 }

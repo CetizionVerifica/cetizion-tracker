@@ -12,6 +12,7 @@ import Mailboxes from './Mailboxes.jsx';
 import Webhooks from './Webhooks.jsx';
 import Templates from './Templates.jsx';
 import Emails from './Emails.jsx';
+import ClientEmails from './ClientEmails.jsx';
 import BulkImport from './BulkImport.jsx';
 import TravelImport from './TravelImport.jsx';
 import ReportCategories from './ReportCategories.jsx';
@@ -55,7 +56,7 @@ export function SettingsPane({ title, description, actions, children }) {
           being 1280 did not help. */}
       <div className="flex flex-col gap-4 @3xl:flex-row @3xl:flex-wrap @3xl:items-start">
         <div className="min-w-0 flex-1">
-          <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">{title}</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">{title}</h1>
           {description && (
             <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">{description}</p>
           )}
@@ -117,6 +118,7 @@ const GROUPS = [
       { to: 'import', label: 'Import', element: <BulkImport />, adminOnly: true },
       { to: 'import-travel', label: 'Import travel', element: <TravelImport />, adminOnly: true, hr: true },
       { to: 'emails', label: 'Emails & jobs', element: <Emails />, adminOnly: true },
+      { to: 'client-emails', label: 'Client emails', element: <ClientEmails /> },
     ],
   },
 ];

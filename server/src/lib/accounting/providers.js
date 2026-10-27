@@ -10,7 +10,8 @@
  *     book falls back to export files uploaded on the Accounting page.
  */
 import { query } from '../../db.js';
-import { checkGstin, splitTax, STATE_ALPHA } from './gst.js';
+import { checkGstin, splitGstAmount, STATE_ALPHA } from './gst.js';
+import { RATE_MIX_SQL, defaultGstRate, stageGst } from './stageGst.js';
 import { assertNotStaging } from '../ops/environment.js';
 
 // ------------------------------------------------------------ the draft
@@ -19,35 +20,39 @@ import { assertNotStaging } from '../ops/environment.js';
 export async function draftForStage(stageId) {
   const { rows: [s] } = await query(
     `SELECT s.*, po.quotation_no, po.po_date, p.company_id, c.name AS company_name, c.gstin, c.address, c.city,
-            q.place_of_supply_state, q.id AS quotation_id
+            q.place_of_supply_state, q.id AS quotation_id, ${RATE_MIX_SQL} AS rate_mix
        FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
        LEFT JOIN companies c ON c.id = p.company_id LEFT JOIN quotations q ON q.quotation_no = po.quotation_no
       WHERE s.id = $1`, [stageId]);
   if (!s) throw Object.assign(new Error('Payment stage not found'), { status: 404 });
   const { rows: settings } = await query(`SELECT key, value FROM settings WHERE key IN ('company_state_code','gst_rate_default','company_gstin')`);
   const set = Object.fromEntries(settings.map((r) => [r.key, r.value]));
-  const { rows: [rate] } = s.quotation_id
-    ? await query('SELECT round(SUM(amount * gst_rate) / NULLIF(SUM(amount), 0), 2) AS rate FROM quotation_lines WHERE quotation_id = $1', [s.quotation_id])
-    : { rows: [] };
-  const gstRate = Number(rate?.rate ?? set.gst_rate_default ?? 18);
+  // The stage amount INCLUDES GST: take it out at the quotation's own rates
+  // (stageGst.js, the same split the portal shows), never add it on top.
+  const split = stageGst(s, await defaultGstRate());
+  const { parts, taxable, gst } = split;
   const buyer = checkGstin(s.gstin);
   const ourState = set.company_state_code || checkGstin(set.company_gstin).state_code || null;
   const theirState = buyer.valid ? buyer.state_code : (s.place_of_supply_state || '').match(/^\d{2}/)?.[0] || null;
-  const taxable = Number(s.stage_amount);
-  const tax = splitTax(taxable, gstRate, { ourState, theirState });
+  const tax = splitGstAmount(gst, { ourState, theirState });
   const { rows: [map] } = await query(`SELECT books_ref, books_name FROM accounting_mappings WHERE kind = 'customer' AND tracker_ref = $1`, [String(s.company_id)]);
   const problems = [];
   if (!s.gstin) problems.push('The client has no GSTIN on its company record');
   else if (!buyer.valid) problems.push(`The client's GSTIN looks wrong (${buyer.reason})`);
   if (!ourState) problems.push('Set company_state_code (or company_gstin) in Settings to decide CGST+SGST or IGST');
   if (s.currency !== 'INR') problems.push(`The PO is in ${s.currency}; check the rate and export treatment`);
+  if (split.estimated) problems.push(`The PO's quotation has no lines, so GST is assumed at the default ${parts[0].rate}%; check it`);
   return {
     stage_id: s.id,
     customer: { company_id: s.company_id, name: s.company_name || s.client_name, gstin: s.gstin || null, books_ref: map?.books_ref || null, books_name: map?.books_name || null, address: [s.address, s.city].filter(Boolean).join(', ') || null },
     reference: `${s.po_number} · ${s.stage_name}`,
     po_number: s.po_number, po_date: s.po_date, quotation_no: s.quotation_no,
     description: `${s.stage_name} against PO ${s.po_number}${s.quotation_no ? ` (quotation ${s.quotation_no})` : ''}`,
-    currency: s.currency, taxable, gst_rate: gstRate, ...tax, total: Math.round((taxable + tax.tax) * 100) / 100,
+    // gst_rate is null on a mixed-rate invoice: an average of 18% and 5% is
+    // not a rate an invoice may carry. `parts` lists each rate with its own
+    // taxable value and GST, as GSTR-1 does, and they add up to the total.
+    currency: s.currency, taxable, gst_rate: split.rate, ...tax, total: Number(s.stage_amount),
+    parts,
     place_of_supply: theirState, supply: tax.intra ? 'intra-state (CGST + SGST)' : 'inter-state (IGST)',
     invoice_no: s.invoice_no || null, problems,
   };

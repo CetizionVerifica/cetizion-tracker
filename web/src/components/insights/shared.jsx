@@ -19,7 +19,7 @@ export function Section({ question, answer, rule, data, loading, onRetry, wide =
     <section aria-labelledby={headingId} className={`flex min-w-0 flex-col gap-3 ${wide ? '@3xl:col-span-2' : ''}`}>
       <div>
         <div className="flex items-start gap-1.5">
-          <h2 id={headingId} className="text-[17px] font-semibold text-foreground">{question}</h2>
+          <h2 id={headingId} className="font-display text-lg font-bold text-foreground">{question}</h2>
           {rule && <RuleInfo text={rule} />}
         </div>
         {data && !data.error && answer && <p className="mt-0.5 text-[13px] text-muted-foreground">{answer}</p>}
@@ -27,7 +27,7 @@ export function Section({ question, answer, rule, data, loading, onRetry, wide =
       {data?.error ? (
         <Card><ErrorState message={data.error} onRetry={onRetry} /></Card>
       ) : loading && !data ? (
-        <Skeleton style={{ height: 320 }} className="w-full" />
+        <Skeleton className="h-[320px] w-full" />
       ) : data ? children() : null}
     </section>
   );

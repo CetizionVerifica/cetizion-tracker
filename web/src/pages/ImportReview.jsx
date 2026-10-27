@@ -446,9 +446,9 @@ function Flags({ flags }) {
   // A flag is a sentence: it wraps inside a bounded column, so a long one
   // neither widens the table past the screen nor squeezes the action box.
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 260, maxWidth: 440 }}>
+    <div className="flex min-w-[260px] max-w-[440px] flex-wrap gap-1">
       {flags.map((f, i) => (
-        <span key={i} title={`${f.message}${f.by === 'ai' ? ' (AI)' : ''}`} style={{ maxWidth: '100%' }}>
+        <span key={i} title={`${f.message}${f.by === 'ai' ? ' (AI)' : ''}`} className="max-w-full">
           <Badge className="h-auto max-w-full justify-start whitespace-normal text-left" tone={f.level === 'error' ? 'danger' : f.level === 'warn' ? 'warning' : 'info'}>{f.by === 'ai' ? '✦ ' : ''}{f.message}</Badge>
         </span>
       ))}

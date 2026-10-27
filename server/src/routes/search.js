@@ -55,7 +55,7 @@ const SEARCHABLE = [
   {
     type: 'enquiry', resource: 'enquiries', icon: 'deal',
     title: 'enquiry_no', subtitle: ['client_name', 'service'],
-    state: 'status', href: () => '/enquiries',
+    state: 'status', href: (r) => `/enquiries/${encodeURIComponent(r.enquiry_no)}`,
   },
   {
     type: 'company', resource: 'companies', icon: 'company',

@@ -76,6 +76,21 @@ runs on every push.
   database name.
 - **Tokens** (acceptance links, portal links, API tokens) are stored only as
   hashes; mailbox tokens are encrypted.
+- **Service questionnaires** (#208). A client fills in a questionnaire from a
+  link with no sign-in, built like an acceptance link: a random token of
+  which only the SHA-256 is stored, an expiry (Settings, 30 days), revoke,
+  rate limits, the same 404 for a wrong, expired, revoked or withdrawn link,
+  and the link built only from the public address in Settings or
+  CORS_ORIGIN, never from request headers. The token is redacted from the
+  email log. A token reaches one response: its questions, its own answers
+  and the names of its own files; nothing else about the enquiry, its
+  quotation or the company. Every answer is checked against its question on
+  the server (lib/questionnaireDefinition.js) and stored as a typed value,
+  never as markup or code; an answer may name only files uploaded into its
+  own response. Uploads: PDF, image, Word or Excel, within the document size
+  cap, served as downloads, and reachable by staff through the enquiry's
+  owner. No AI reads answers or files. Questionnaires are built by admins
+  only, and a published version is frozen by a database trigger.
 - **What a client can write in the portal** (#198). Besides a message, a
   signed-in client contact can confirm an invoice, raise a query on an
   invoice or PO, report a payment (amount, TDS, date, reference and an
@@ -181,6 +196,21 @@ To upgrade: change the version in the URL **and** in the version field, run
 `npm install` in `server/`, confirm the `integrity` hash in the lockfile
 changed, and commit the lockfile with it.
 
+## 5a. Advisories in dependencies: who fails, and who fixes
+
+New advisories are published against packages we already use almost every
+day. So the checks split the job:
+
+| Where | What fails | Why |
+| --- | --- | --- |
+| A pull request | Only a high or critical advisory **the pull request adds** (`scripts/ci/new-advisories.mjs` compares its lock file with the base branch's). One already on `main` shows as a warning. The image scan covers the operating system's packages | A documentation change cannot fix, and should not be blocked by, an advisory published yesterday against a package it does not touch |
+| `main` and the weekly run (Monday 03:00 UTC) | Any high or critical advisory, in either lock file and anywhere in the image | So a new one is still noticed |
+| Dependabot security updates | — | **Fixes** it: opens a pull request with the patched version. Needs *Dependabot alerts* and *Dependabot security updates* on in GitHub › Settings › Code security (admin); `.github/dependabot.yml` keeps routine bumps off but not these |
+
+When `main` goes red for an advisory: merge Dependabot's pull request, or run
+`npm audit fix` in that folder in a pull request of its own (as #242 and #245
+did).
+
 ## 6. Access review (every quarter)
 
 | System | Check |
@@ -191,6 +221,7 @@ changed, and commit the lockfile with it.
 | Server SSH | `~/.ssh/authorized_keys`: one key per person, remove leavers |
 | Tracker | API tokens (Settings), webhook endpoints, portal access per client |
 | SheetJS | a newer `xlsx` at <https://sheetjs.com/> — nothing automated watches this (section 5) |
+| GitHub › Settings › Code security | *Dependabot alerts* and *Dependabot security updates* still on (section 5a); no open security alert older than a week |
 
 Write the date and who did it at the bottom of this file.
 
