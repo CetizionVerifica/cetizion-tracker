@@ -32,6 +32,7 @@ import { unitOf } from './fields.js';
 import { resources } from '../lib/resources.js';
 import { sameService, similarName } from '../lib/names.ts';
 import { financialYear } from '../lib/sequences.js';
+import { paisa } from '../lib/accounting/gst.js';
 
 export const DEFAULT_RULES = {
   exclude_iso: true,
@@ -271,7 +272,10 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
     const ownUnit = typeof v === 'string' && /\b(?:crores?|cr|lakhs?|lacs?|lac|l|k|mn|million|thousand)\b/i.test(v);
     // Lakhs and crores count rupees: a dollar or euro amount keeps its own figure.
     const foreign = m.currency && m.currency !== 'INR';
-    return unit === 1 || m.amount === null || ownUnit || foreign ? m : { ...m, amount: Math.round(m.amount * unit * 100) / 100, unit };
+    const read = unit === 1 || m.amount === null || ownUnit || foreign ? m : { ...m, amount: Math.round(m.amount * unit * 100) / 100, unit };
+    // "8,111 + GST", or a column headed "(excl. GST)": the amount is before GST.
+    const excl = exclGst(v, mapping[f]);
+    return excl ? { ...read, excl_gst: { ...excl, header: mapping[f], cell: String(v).trim() } } : read;
   };
   const po = money('po_amount');
   const quoted = money('quoted_price');
@@ -335,12 +339,14 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
     quotation_note: qRaw && !qIsNumber ? qRaw : null,
     quoted_price: quoted.amount,
     quoted_reinterpreted: quoted.reinterpreted || null,
+    quoted_excl_gst: quoted.excl_gst || null,
     po_date: findDate(get('po_date')),
     po_date_from_note: poRef.date,
     po_number: poRef.number,
     po_note: poRef.note,
     po_amount: po.amount,
     po_amount_reinterpreted: po.reinterpreted,
+    po_amount_excl_gst: po.excl_gst || null,
     amount_unit: po.unit || quoted.unit || received.unit || null,
     currency: amountCurrency || columnCurrency || null,
     currency_conflict: amountCurrency && columnCurrency && amountCurrency !== columnCurrency ? `${columnCurrency} column, ${amountCurrency} amount` : null,
@@ -360,6 +366,65 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
   };
 }
 const str = (v) => (v === null || v === undefined ? null : String(v).trim() || null);
+
+// "Contract Amount (excl. GST)", "8,111 + GST", "Fee plus 18% IGST",
+// "+ CGST + SGST", "GST 18% extra": an amount before GST. In a header, "+ GST"
+// names what the column adds up ("Amount + GST"), so only the excluding words count.
+const GST = String.raw`(?:[ics]|ut)?gst`;
+const RATE = String.raw`\d{1,2}(?:\.\d+)?\s*%`;
+const WORDS = String.raw`\bexcl(?:uding|usive)?\.?(?:\s+of)?|\bbefore|\bwithout|\bw\/o|\bpre`;
+const AFTER = String.raw`[\s-]*(?:applicable\s+)?(?:${RATE}\s*)?${GST}\b|\b${GST}\s*@?\s*(?:${RATE}\s*)?(?:extra|excluded|additional)\b`;
+const EXCL_CELL = new RegExp(`(?:${WORDS}|\\bplus|\\+)${AFTER}`, 'i');
+const EXCL_HEADER = new RegExp(`(?:${WORDS})${AFTER}`, 'i');
+// "1,18,000 (1,00,000 + GST)", "8,111 + GST = 9,571", "Total incl. GST": the figure already includes it.
+const INCLUSIVE = /=|\bincl|\btotal\b/i;
+
+/** The GST rate written in a text: "+ 12% GST", "GST @ 12%", "+ 9% CGST + 9% SGST" (18). */
+function gstRate(text) {
+  const parts = [...String(text).matchAll(new RegExp(String.raw`(\d{1,2}(?:\.\d+)?)\s*%\s*(${GST})\b|\b(${GST})\s*@?\s*(\d{1,2}(?:\.\d+)?)\s*%`, 'gi'))]
+    .map((m) => ({ rate: Number(m[1] ?? m[4]), kind: (m[2] ?? m[3]).toLowerCase() }));
+  if (!parts.length) return null;
+  const halves = parts.filter((p) => p.kind !== 'gst' && p.kind !== 'igst');
+  return halves.length ? halves.reduce((n, p) => n + p.rate, 0) : parts[0].rate;
+}
+
+/**
+ * Whether an amount is before GST, from its cell or its column header, and at
+ * what rate: the cell's own rate, else the header's, else 18%. A cell that
+ * reads as an inclusive total is taken as it is, whatever the header says.
+ */
+export function exclGst(cell, header) {
+  const c = typeof cell === 'string' ? cell : '';
+  const h = typeof header === 'string' ? header : '';
+  const amounts = c.replace(new RegExp(RATE, 'g'), ' ').match(/\d[\d,]*(?:\.\d+)?/g) || [];
+  if (INCLUSIVE.test(c) || amounts.length > 1) return null;
+  const inCell = EXCL_CELL.test(c);
+  const inHeader = !/\bincl|\btotal\b/i.test(h) && EXCL_HEADER.test(h);
+  if (!inCell && !inHeader) return null;
+  return { rate: gstRate(c) ?? (inHeader ? gstRate(h) : null) ?? 18, from: inCell ? 'cell' : 'header' };
+}
+
+const inr = (n) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+/**
+ * The tracker's quotation and PO values include GST (§3.5), so a rupee amount
+ * the sheet says is before GST is grossed up, and the row says so. Exports
+ * (non-INR) are zero-rated: their amount is the whole amount, kept as it is.
+ */
+function grossUpExclGst(r, defaultCurrency) {
+  if ((r.currency || defaultCurrency) !== 'INR') return;
+  for (const f of ['po_amount', 'quoted_price']) {
+    const excl = r[`${f}_excl_gst`];
+    // A 0% rate adds nothing, and says nothing.
+    if (!excl || r[f] === null || !excl.rate) continue;
+    const basic = r[f];
+    r[f] = paisa(basic * (1 + excl.rate / 100));
+    const said = excl.from === 'cell' ? `Sheet says "${excl.cell}"` : `The column "${excl.header}" is before GST`;
+    r[`${f}_gst_note`] = `${said}: read as ${inr(basic)} + GST; stored as ${inr(r[f])} incl. GST at ${excl.rate}%. Confirm with sales`;
+    // The note above quotes the cell, so it is not also called a misreading.
+    if (excl.from === 'cell') r[f === 'po_amount' ? 'po_amount_reinterpreted' : 'quoted_reinterpreted'] = null;
+  }
+}
 
 /** A "Total" or "Grand total" line at the foot of a sheet is not a deal. */
 const TOTAL_ROW = /^(?:grand\s*|sub\s*-?\s*)?totals?\b/i;
@@ -467,6 +532,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
 
   for (const raw of rows) {
     const r = extractRow(raw, mapping, readOpts);
+    grossUpExclGst(r, rules.default_currency);
     // Keyed by the sheet position, as ai.js keys them: hints must never cross
     // between two rows that happen to share an S.No.
     const hint = hints[r.row] || { advance_percent: null, flags: [] };
@@ -558,6 +624,8 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     if (r.amount_unit) qItem.flags.push({ level: 'info', code: 'amount_unit', message: `Amounts read in ${r.amount_unit === 1e5 ? 'lakhs' : r.amount_unit === 1e7 ? 'crores' : r.amount_unit === 1e6 ? 'millions' : 'thousands'}, as the column header says`, by: 'rule' });
     if (r.currency_conflict) qItem.flags.push({ level: 'warn', code: 'currency_conflict', message: `The currency column and the amount disagree (${r.currency_conflict}); read as ${r.currency}`, by: 'rule' });
     if (r.quoted_reinterpreted && r.po_amount === null) qItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.quoted_reinterpreted}"; read as ${r.quoted_price}. Confirm with sales`, by: 'rule' });
+    const qGstNote = r.po_amount !== null ? r.po_amount_gst_note : r.quoted_price_gst_note;
+    if (qGstNote) qItem.flags.push({ level: 'warn', code: 'amount_excl_gst', message: qGstNote, by: 'rule' });
     if (!r.proposal_date) qItem.flags.push({ level: 'info', code: 'no_date', message: 'No proposal date in the sheet', by: 'rule' });
     if (!r.contact) qItem.flags.push({ level: 'info', code: 'no_contact', message: 'No contact person in the sheet', by: 'rule' });
     if (existing) {
@@ -644,7 +712,8 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
     if (!poDate) poItem.flags.push({ level: 'warn', code: 'no_po_date', message: 'No PO date and no proposal date to derive one', by: 'rule' });
     if (r.received !== null && r.received > r.po_amount + 0.01) poItem.flags.push({ level: 'warn', code: 'received_exceeds_po', message: `Received ${r.received} is more than the PO value ${r.po_amount}: check the PO amount in the sheet`, by: 'rule' });
-    if (r.po_amount_reinterpreted) poItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.po_amount_reinterpreted}"; read as ${r.po_amount} assuming a mistyped comma. Confirm with sales`, by: 'rule' });
+    if (r.po_amount_reinterpreted) poItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.po_amount_reinterpreted}"; read as ${r.po_amount}. Confirm with sales`, by: 'rule' });
+    if (r.po_amount_gst_note) poItem.flags.push({ level: 'warn', code: 'amount_excl_gst', message: r.po_amount_gst_note, by: 'rule' });
 
     const svcItem = push({ step: 'service', source_row: r.sno, parent_seq: poItem.seq, payload: { po_number: r.po_number, service: r.service, service_value: r.po_amount } });
     const existingSvc = poExisting ? (liveServices.get(norm(r.po_number)) || []) : [];
