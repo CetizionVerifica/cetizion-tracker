@@ -189,13 +189,17 @@ export function twoRowLines(lines, lineAmount) {
 
 // ----------------------------------------------------------- money
 
+/** Not in INR (unknown counts as INR): an export, zero-rated, like gstBreakdown. */
+export const isExport = (currency) => String(currency || 'INR').toUpperCase() !== 'INR';
+
 /**
  * A basic value with GST added, at the quotation lines' own rates
  * (weighted by their amounts), else 18%. The tracker's PO value includes
- * GST (§3.5).
+ * GST (§3.5). An export (not in INR) is zero-rated: nothing is added.
  * lines: [{ amount, gst_rate }]
  */
-export function grossUp(basic, lines = []) {
+export function grossUp(basic, lines = [], currency = 'INR') {
+  if (isExport(currency)) return round2(Number(basic));
   const net = lines.reduce((n, l) => n + Number(l.amount || 0), 0);
   const gross = lines.reduce((n, l) => n + Number(l.amount || 0) * (1 + Number(l.gst_rate ?? 18) / 100), 0);
   const factor = net > 0 ? gross / net : 1.18;
