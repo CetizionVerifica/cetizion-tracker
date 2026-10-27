@@ -69,7 +69,8 @@ dashboardRouter.get('/overview', async (req, res) => {
         (SELECT COUNT(*)::int FROM travel_logs)                    AS trips,
         (SELECT COALESCE(SUM(total_travel_cost), 0) FROM v_travel_logs) AS total_cost,
         (SELECT COUNT(*)::int FROM v_travel_vendor_invoices WHERE finance_to_pay) AS vendor_to_pay,
-        (SELECT COALESCE(SUM(invoice_amount - amount_paid), 0)
+        -- Less what credit notes gave back, as finance_to_pay itself is (#196).
+        (SELECT COALESCE(SUM(net_payable - amount_paid), 0)
            FROM v_travel_vendor_invoices WHERE finance_to_pay)     AS vendor_to_pay_amount,
         (SELECT COUNT(*)::int FROM v_travel_vendor_invoices WHERE payment_status = 'Overdue') AS vendor_overdue,
         (SELECT COUNT(*)::int FROM v_employee_expense_claims WHERE status = 'Pending approval') AS claims_pending,

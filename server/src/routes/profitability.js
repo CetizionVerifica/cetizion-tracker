@@ -67,13 +67,24 @@ profitabilityRouter.get('/projects/:id', async (req, res) => {
   const id = String(req.params.id);
   const { rows: [p] } = await query('SELECT * FROM v_project_profitability WHERE project_id = $1', [id]);
   if (!p) throw new ApiError(404, 'Project not found');
-  const [vendors, claims, manual] = await Promise.all([
-    query(`SELECT vi.vendor_invoice_id AS ref, t.travel_id, t.arranged_by AS vendor, t.destination, vi.invoice_date AS incurred_on, vi.invoice_amount AS amount, vi.amount_paid
-             FROM travel_vendor_invoices vi JOIN travel_logs t ON t.travel_id = vi.travel_id JOIN purchase_orders po ON po.po_number = t.po_number
-            WHERE po.project_id = $1 ORDER BY vi.invoice_date NULLS LAST`, [id]),
+  // The project's trips as v_project_profitability takes them: its PO's
+  // project, or the trip's own when it has no PO. Vendor lines are each
+  // trip's share of an agency invoice, net of credit notes, so the lines
+  // add up to the totals above them.
+  const onProject = `COALESCE(po.project_id, t.project_id) = $1`;
+  const [vendors, looseCredits, claims, manual] = await Promise.all([
+    query(`SELECT l.vendor_invoice_ref AS ref, t.travel_id, COALESCE(tv.name, t.arranged_by) AS vendor, t.destination, l.invoice_date AS incurred_on, l.net_cost AS amount, l.paid AS amount_paid
+             FROM v_travel_invoice_lines l JOIN travel_logs t ON t.travel_id = l.travel_id LEFT JOIN purchase_orders po ON po.po_number = t.po_number
+             LEFT JOIN travel_vendors tv ON tv.id = l.vendor_id
+            WHERE ${onProject} ORDER BY l.invoice_date NULLS LAST, l.id`, [id]),
+    // On a leg of the project's but on no invoice: it comes off nothing, a gap.
+    query(`SELECT c.credit_note_no AS ref, t.travel_id, tv.name AS vendor, t.destination, c.credit_note_date AS incurred_on, c.refund_amount AS amount, 0 AS amount_paid, c.document_id
+             FROM travel_vendor_credit_notes c JOIN travel_segments s ON s.id = c.segment_id JOIN travel_logs t ON t.travel_id = s.travel_id
+             LEFT JOIN purchase_orders po ON po.po_number = t.po_number LEFT JOIN travel_vendors tv ON tv.id = c.vendor_id
+            WHERE c.against_invoice_id IS NULL AND ${onProject} ORDER BY c.credit_note_date NULLS LAST, c.id`, [id]),
     query(`SELECT c.claim_id AS ref, t.travel_id, t.employee_name AS vendor, c.expense_category, c.submission_date AS incurred_on, c.amount_claimed AS amount, c.amount_reimbursed AS amount_paid, c.approval_status
-             FROM employee_expense_claims c JOIN travel_logs t ON t.travel_id = c.travel_id JOIN purchase_orders po ON po.po_number = t.po_number
-            WHERE po.project_id = $1 ORDER BY c.submission_date NULLS LAST`, [id]),
+             FROM employee_expense_claims c JOIN travel_logs t ON t.travel_id = c.travel_id LEFT JOIN purchase_orders po ON po.po_number = t.po_number
+            WHERE ${onProject} ORDER BY c.submission_date NULLS LAST`, [id]),
     // Each cost at the rate in force on the day it was incurred, exactly as
     // v_project_profitability counts it, so a line and the total it is part
     // of never disagree. No rate on or before that day: a gap, as there.
@@ -84,6 +95,7 @@ profitabilityRouter.get('/projects/:id', async (req, res) => {
   ]);
   const lines = [
     ...vendors.rows.map((r) => ({ kind: 'travel_vendor', ...r, gap: r.amount == null ? 'No invoice amount' : null, committed: r.amount == null ? 0 : Math.max(Number(r.amount) - Number(r.amount_paid), 0) })),
+    ...looseCredits.rows.map((r) => ({ kind: 'travel_vendor', ...r, gap: 'Credit note on no invoice: not taken off', committed: 0 })),
     ...claims.rows.map((r) => ({ kind: 'expense_claim', ...r, gap: null, committed: r.approval_status === 'Rejected' ? 0 : Math.max(Number(r.amount) - Number(r.amount_paid), 0) })),
     ...manual.rows.map((r) => ({ kind: 'manual', ref: r.id, ...r, gap: r.amount == null ? 'No amount' : r.fx_rate == null ? `No ${r.currency} exchange rate on or before ${r.incurred_on ? 'the date of the cost' : 'the day it was entered'} in Settings` : null })),
   ];

@@ -59,17 +59,17 @@ export function ProjectProfit({ projectId, onChanged }) {
 
   return (
     <>
-      <Card title="Margin" hint="PO value before GST against delivery cost, in INR. Committed cost is billed or claimed but not yet paid.">
+      <Card title="Margin" hint="PO value before GST against delivery cost, in INR. Costs are as paid, GST included. Committed cost is billed or claimed but not yet paid.">
         <KeyValues items={[
           { label: 'Revenue (PO value before GST)', value: money(p.revenue) },
           // Billed and banked as the client paid them, GST included, unlike revenue above.
           { label: 'Invoiced / received (with GST)', value: `${money(p.invoiced)} / ${money(p.received)}` },
-          { label: 'Cost paid', value: money(p.cost_paid) },
-          { label: 'Cost committed', value: money(p.cost_committed) },
+          { label: 'Cost paid (incl. GST)', value: money(p.cost_paid) },
+          { label: 'Cost committed (incl. GST)', value: money(p.cost_committed) },
           { label: 'Margin', value: <span className="strong">{money(p.margin)}</span> },
           { label: 'Margin %', value: p.margin_percent == null ? '—' : <Badge tone={marginTone(Number(p.margin_percent), p.margin_alert_percent)}>{p.margin_percent}%</Badge> },
           { label: 'Planned cost', value: p.estimated_cost == null ? 'not set (edit the project)' : `${money(p.estimated_cost)} · ${Number(p.cost_variance) > 0 ? `${money(p.cost_variance)} over` : `${money(-p.cost_variance)} under`}` },
-          { label: 'Gaps', value: p.cost_gaps + p.revenue_gaps > 0 ? <Badge tone="warning">{p.cost_gaps + p.revenue_gaps} missing amount or rate</Badge> : 'none' },
+          { label: 'Gaps', value: p.cost_gaps + p.revenue_gaps > 0 ? <Badge tone="warning">{p.cost_gaps + p.revenue_gaps} {p.cost_gaps + p.revenue_gaps === 1 ? 'gap' : 'gaps'}: an amount, rate or credit note to sort out</Badge> : 'none' },
         ]} />
       </Card>
       <Card flush title="Costs" hint="Travel vendor bills and expense claims on this project's trips, and costs added here." actions={mayWriteCost ? <button type="button" className="btn btn--sm" onClick={() => setForm('new')}>Add a cost</button> : null}>

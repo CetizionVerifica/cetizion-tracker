@@ -210,27 +210,36 @@ CROSS JOIN LATERAL (
 --   One travel agency invoice covers several legs, trips and people, one
 --   line each. What was paid on the invoice, and what its credit notes gave
 --   back, are shared over its lines by their amounts — a credit note naming
---   a leg goes to that leg's line — so a trip's cost and payments add up to
---   the invoices', and nothing is counted twice.
+--   a leg goes to that leg's lines, shared over them the same way — so a
+--   trip's cost and payments add up to the invoices', and nothing is
+--   counted twice.
 -- ---------------------------------------------------------------------
 
+-- Every split below is in paise, with what rounding leaves over put on the
+-- line that took the most of that split, so the lines add up to the
+-- invoice exactly and a line that took none of it never gets a paisa.
 CREATE VIEW v_travel_invoice_lines AS
 WITH lines AS (
   SELECT l.*, vi.vendor_id, vi.vendor_invoice_id AS vendor_invoice_ref, vi.vendor_invoice_no, vi.invoice_date,
          vi.amount_paid AS invoice_paid,
          SUM(COALESCE(l.line_total, 0)) OVER w AS lines_total,
-         COUNT(*) OVER w                       AS line_count
+         COUNT(*) OVER w                       AS line_count,
+         SUM(COALESCE(l.line_total, 0)) OVER g AS leg_total,
+         COUNT(*) OVER g                       AS leg_count,
+         row_number() OVER (g ORDER BY l.id)   AS leg_row
     FROM travel_vendor_invoice_lines l
     JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
-  WINDOW w AS (PARTITION BY l.vendor_invoice_id)
+  WINDOW w AS (PARTITION BY l.vendor_invoice_id), g AS (PARTITION BY l.vendor_invoice_id, l.segment_id)
 ),
--- A line's share of its invoice: by amount, or evenly while no line has
--- one; and the credit notes that fall to it.
-credited AS (
+-- The credit notes that fall to a line: those naming its leg, and the
+-- rest of the invoice's. A leg is credited no more than it cost (once its
+-- invoice has amounts to know that); what is over comes off the invoice.
+notes AS (
   SELECT lines.*,
          CASE WHEN lines_total > 0 THEN COALESCE(line_total, 0) / lines_total ELSE 1.0 / line_count END AS share,
-         round(COALESCE(cn.on_line, 0) + COALESCE(cn.shared, 0)
-               * CASE WHEN lines_total > 0 THEN COALESCE(line_total, 0) / lines_total ELSE 1.0 / line_count END, 2) AS credited
+         CASE WHEN lines_total > 0 THEN LEAST(COALESCE(cn.on_leg, 0), leg_total) ELSE COALESCE(cn.on_leg, 0) END AS leg_credit,
+         COALESCE(cn.on_leg, 0) AS leg_named,
+         COALESCE(cn.shared, 0) AS shared_named
     FROM lines
     CROSS JOIN LATERAL (
       SELECT SUM(c.refund_amount) FILTER (WHERE c.segment_id IS NOT NULL AND c.segment_id = lines.segment_id),
@@ -238,21 +247,63 @@ credited AS (
                OR NOT EXISTS (SELECT 1 FROM travel_vendor_invoice_lines y
                                WHERE y.vendor_invoice_id = c.against_invoice_id AND y.segment_id = c.segment_id))
         FROM travel_vendor_credit_notes c WHERE c.against_invoice_id = lines.vendor_invoice_id
-    ) cn(on_line, shared)
+    ) cn(on_leg, shared)
+),
+-- A leg's credit over that leg's lines by amount, or evenly while none has one.
+leg_split AS (
+  SELECT notes.*,
+         leg_credit * CASE WHEN leg_total > 0 THEN COALESCE(line_total, 0) / leg_total ELSE 1.0 / leg_count END AS leg_exact,
+         -- The invoice's credit to share: its own, and what legs could not take.
+         shared_named + SUM(leg_named - leg_credit) FILTER (WHERE leg_row = 1) OVER (PARTITION BY vendor_invoice_id) AS pool
+    FROM notes
+),
+leg_rounded AS (
+  SELECT leg_split.*,
+         CASE WHEN row_number() OVER (PARTITION BY vendor_invoice_id, segment_id ORDER BY leg_exact DESC, id DESC) = 1
+              THEN round(leg_credit, 2) - (SUM(round(leg_exact, 2)) OVER (PARTITION BY vendor_invoice_id, segment_id) - round(leg_exact, 2))
+              ELSE round(leg_exact, 2) END AS leg_cr
+    FROM leg_split
+),
+-- The rest over what each line has left after its leg's credit. More credit
+-- than the invoice cost is taken off only down to nothing, and flagged.
+room AS (
+  SELECT leg_rounded.*,
+         GREATEST(COALESCE(line_total, 0) - leg_cr, 0) AS line_room,
+         SUM(GREATEST(COALESCE(line_total, 0) - leg_cr, 0)) OVER (PARTITION BY vendor_invoice_id) AS invoice_room
+    FROM leg_rounded
+),
+shared_split AS (
+  SELECT room.*,
+         CASE WHEN lines_total > 0 THEN LEAST(pool, invoice_room) ELSE pool END AS pool_used,
+         (lines_total > 0 AND pool > invoice_room) AS over_credited,
+         CASE WHEN lines_total > 0 THEN LEAST(pool, invoice_room) ELSE pool END
+           * CASE WHEN invoice_room > 0 THEN line_room / invoice_room ELSE 1.0 / line_count END AS shared_exact
+    FROM room
+),
+credited AS (
+  SELECT shared_split.*,
+         leg_cr + CASE WHEN row_number() OVER (PARTITION BY vendor_invoice_id ORDER BY shared_exact DESC, id DESC) = 1
+              THEN round(pool_used, 2) - (SUM(round(shared_exact, 2)) OVER (PARTITION BY vendor_invoice_id) - round(shared_exact, 2))
+              ELSE round(shared_exact, 2) END AS credited
+    FROM shared_split
 ),
 -- What was paid on the invoice goes to its lines by what each costs after
 -- credit notes, so a refunded leg is not shown as paid for.
 netted AS (
   SELECT credited.*,
-         SUM(GREATEST(COALESCE(line_total, 0) - credited, 0)) OVER (PARTITION BY vendor_invoice_id) AS nets_total
-    FROM credited
+         invoice_paid * CASE WHEN nets_total > 0 THEN GREATEST(COALESCE(line_total, 0) - credited, 0) / nets_total ELSE share END AS paid_exact
+    FROM (SELECT credited.*, SUM(GREATEST(COALESCE(line_total, 0) - credited, 0)) OVER (PARTITION BY vendor_invoice_id) AS nets_total
+            FROM credited) credited
 )
 SELECT
   id, vendor_invoice_id, travel_id, segment_id, base_fare, service_charge, gst_amount, gst_rate, line_total, remarks,
   vendor_id, vendor_invoice_ref, vendor_invoice_no, invoice_date, share,
-  round(invoice_paid * CASE WHEN nets_total > 0 THEN GREATEST(COALESCE(line_total, 0) - credited, 0) / nets_total ELSE share END, 2) AS paid,
+  CASE WHEN row_number() OVER (PARTITION BY vendor_invoice_id ORDER BY paid_exact DESC, id DESC) = 1
+       THEN round(invoice_paid, 2) - (SUM(round(paid_exact, 2)) OVER (PARTITION BY vendor_invoice_id) - round(paid_exact, 2))
+       ELSE round(paid_exact, 2) END                      AS paid,
   credited,
-  line_total - credited                                   AS net_cost
+  line_total - credited                                   AS net_cost,
+  over_credited
 FROM netted;
 
 -- ---------------------------------------------------------------------
@@ -552,7 +603,7 @@ SELECT
     ELSE 'Vendor to pay'
   END                                                      AS vendor_invoice_status,
   CASE
-    WHEN c.claim_count = 0                            THEN 'No claim'
+    WHEN c.live_claims = 0                            THEN 'No claim'
     WHEN c.employee_reimbursed >= c.employee_claims   THEN 'Reimbursed'
     WHEN c.employee_reimbursed > 0                    THEN 'Partly reimbursed'
     ELSE 'To reimburse'
@@ -565,18 +616,28 @@ LEFT JOIN trip_types      tt ON tt.id         = tl.trip_type_id
 LEFT JOIN payment_stages  bs ON bs.id         = tl.billed_stage_id
 -- The agency's cost of the trip: its share of every invoice line, less
 -- credit notes, and what was paid on it (v_travel_invoice_lines, #196).
+-- Summed once for every trip and joined: a trip's filter cannot reach
+-- below that view's per-invoice windows, so looking it up trip by trip
+-- worked out every invoice line again for each trip.
+LEFT JOIN (
+  SELECT travel_id,
+         SUM(net_cost)                         AS vendor_cost,
+         SUM(paid)                             AS vendor_paid,
+         COUNT(DISTINCT vendor_invoice_id)::int AS vendor_invoice_count
+  FROM v_travel_invoice_lines GROUP BY travel_id
+) vl ON vl.travel_id = tl.travel_id
 CROSS JOIN LATERAL (
-  SELECT COALESCE(SUM(net_cost), 0),
-         COALESCE(SUM(paid), 0),
-         COUNT(DISTINCT vendor_invoice_id)::int
-  FROM v_travel_invoice_lines l WHERE l.travel_id = tl.travel_id
+  SELECT COALESCE(vl.vendor_cost, 0), COALESCE(vl.vendor_paid, 0), COALESCE(vl.vendor_invoice_count, 0)
 ) v(vendor_cost, vendor_paid, vendor_invoice_count)
+-- A rejected claim is nobody's cost: it is not counted, nor waited on to
+-- be reimbursed, as v_project_profitability leaves it out.
 CROSS JOIN LATERAL (
-  SELECT COALESCE(SUM(amount_claimed), 0),
+  SELECT COALESCE(SUM(amount_claimed) FILTER (WHERE approval_status <> 'Rejected'), 0),
          COALESCE(SUM(amount_reimbursed), 0),
-         COUNT(*)
+         COUNT(*),
+         COUNT(*) FILTER (WHERE approval_status <> 'Rejected')
   FROM employee_expense_claims ec WHERE ec.travel_id = tl.travel_id
-) c(employee_claims, employee_reimbursed, claim_count)
+) c(employee_claims, employee_reimbursed, claim_count, live_claims)
 CROSS JOIN LATERAL (
   SELECT COUNT(*)::int, array_remove(array_agg(DISTINCT mode), NULL)
   FROM travel_segments s WHERE s.travel_id = tl.travel_id
@@ -1029,8 +1090,21 @@ vendors AS (
   SELECT tr.project_id,
          SUM(l.paid) AS paid,
          SUM(GREATEST(COALESCE(l.net_cost, l.paid) - l.paid, 0)) AS committed,
-         COUNT(*) FILTER (WHERE l.line_total IS NULL) AS gaps
+         -- And an invoice credited beyond its cost: some of the credit came off nothing.
+         COUNT(*) FILTER (WHERE l.line_total IS NULL)
+           + COUNT(DISTINCT l.vendor_invoice_id) FILTER (WHERE l.over_credited) AS gaps
     FROM v_travel_invoice_lines l JOIN trips tr ON tr.travel_id = l.travel_id
+   GROUP BY tr.project_id
+),
+-- A credit note on one of the project's legs that names no invoice comes
+-- off nothing: money back the margin cannot see, so a gap until it is put
+-- against its invoice.
+loose_credits AS (
+  SELECT tr.project_id, COUNT(*) AS gaps
+    FROM travel_vendor_credit_notes c
+    JOIN travel_segments s ON s.id = c.segment_id
+    JOIN trips tr ON tr.travel_id = s.travel_id
+   WHERE c.against_invoice_id IS NULL
    GROUP BY tr.project_id
 ),
 claims AS (
@@ -1066,11 +1140,12 @@ totals AS (
          COALESCE(m.paid, 0) AS other_paid,
          COALESCE(m.committed, 0) AS other_committed,
          COALESCE(po.revenue_gaps, 0) AS revenue_gaps,
-         COALESCE(v.gaps, 0) + COALESCE(m.gaps, 0) AS cost_gaps,
+         COALESCE(v.gaps, 0) + COALESCE(m.gaps, 0) + COALESCE(lc.gaps, 0) AS cost_gaps,
          po.first_po_date
     FROM projects p
     LEFT JOIN po ON po.project_id = p.project_id
     LEFT JOIN vendors v ON v.project_id = p.project_id
+    LEFT JOIN loose_credits lc ON lc.project_id = p.project_id
     LEFT JOIN claims c ON c.project_id = p.project_id
     LEFT JOIN manual m ON m.project_id = p.project_id
 )
