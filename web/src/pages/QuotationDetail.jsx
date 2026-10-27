@@ -188,9 +188,9 @@ export default function QuotationDetail() {
    * registering a PO while the button said "Send to the client".
    */
   const move = q.approval_status === 'pending' ? (isAdmin ? 'approve' : null)
-    : readyForClient && !q.sent_at ? 'send'
-    // Unsent with a line still to price: the verdict says what to do; no button the server would refuse.
-    : open && priceNeeded && !q.sent_at ? null
+    // Unsent with a line still to price: Send shows, disabled, with the reason
+    // under it (serviceQuotes/CLAUDE.md); primary() holds it.
+    : open && !approvalBlocked && !q.sent_at ? 'send'
     : open && !q.purchase_orders.length ? 'register'
     : won && !q.project_id ? 'project'
     : null;
@@ -221,7 +221,7 @@ export default function QuotationDetail() {
   function note() {
     const rest = 'Everything else this deal can do is in the ⋯ menu.';
     if (move === 'register') {
-      return `Registering asks for the PO number, value, terms and the payment split, then creates ${q.project_id || 'the project'}, its onboarding tasks and the payment stages. ${priceNeeded ? 'Client accepted' : 'Send, Client accepted'}, Revise and Ask approval are in the ⋯ menu.`;
+      return `Registering asks for the PO number, value, terms and the payment split, then creates ${q.project_id || 'the project'}, its onboarding tasks and the payment stages. ${readyForClient ? 'Send, Client accepted, ' : ''}Revise and Ask approval are in the ⋯ menu.`;
     }
     if (move === 'send' && priceNeeded) return `${priceNeededText}. ${rest}`;
     if (move === 'send') return `Sending marks it as sent and can email the PDF to ${q.contact?.email || 'the client'}. ${rest}`;
