@@ -1,10 +1,20 @@
 import { Alert, Badge, Card, DataTable, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
+import { ago } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
+import { SESSION_TONE, sessionStatus } from '../lib/portalSession.js';
 
 /**
  * A company's client-portal switches (#47): on or off, which sections,
  * which contacts, who signed in, and everything they looked at.
+ *
+ * "Who signed in" was the half of that sentence the page did not keep its
+ * word on (#103). The route has always sent the company's last fifty portal
+ * sessions beside the contacts and the audit log, and this file read two of
+ * the three. The contacts table could say somebody last signed in at 09:14
+ * and not whether they are still reading; both buttons above promise that
+ * they end open sessions, about sessions nothing here had ever shown. Signed
+ * in renders them, every state of them, so the promise can be checked.
  */
 const LABEL = { projects: 'Projects', documents: 'Documents', invoices: 'Invoices', certificates: 'Certificates', contact: 'Contact us' };
 
@@ -44,6 +54,21 @@ export function PortalSettings({ companyId }) {
               </div>
             ),
           },
+        ]} />
+      </Card>
+      <Card flush title="Signed in" hint="Every sign-in for this client, newest first. A session lasts eight hours; turning the portal off or withdrawing access ends every open one at once.">
+        <DataTable rows={p.sessions ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>Nobody has signed in yet.</div>} columns={[
+          { key: 'name', header: 'Contact', className: 'strong' },
+          // The word is the state and the colour only agrees with it. There is
+          // no column for the expiry itself: it is the sign-in plus eight
+          // hours and never moves, so the status is the whole of what one
+          // would have said.
+          { key: 'status', header: 'Status', render: (r) => { const s = sessionStatus(r); return <Badge tone={SESSION_TONE[s]}>{s}</Badge>; } },
+          // Null until a session's second request, so somebody who signed in
+          // and read nothing has no last-seen rather than an empty cell.
+          { key: 'last_seen_at', header: 'Last seen', className: 'small', render: (r) => ago(r.last_seen_at) ?? 'not since' },
+          { key: 'created_at', header: 'Signed in', className: 'small', render: (r) => new Date(r.created_at).toLocaleString() },
+          { key: 'ip', header: 'From', className: 'small muted' },
         ]} />
       </Card>
       <Card flush title="Portal activity" hint="Every sign-in, view, download and message.">
