@@ -112,8 +112,13 @@ describe('visits, and the GST sheet', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
 
     const rates = lines.map((l) => l.split(',').slice(-3, -2)[0]).sort();
     assert.deepEqual(rates, ['18', '5'].sort(), 'the rates are the quotation’s own, not an average of them');
-    const taxable = lines.map((l) => Number(l.split(',').slice(-2, -1)[0])).reduce((a, b) => a + b, 0);
-    assert.equal(Math.round(taxable * 100) / 100, Number(stage.stage_amount), 'and together they are the invoice, to the paisa');
+    // The stage amount includes GST (a share of the PO value, the quotation's
+    // total), so it is the invoice value on every line, and each line's
+    // taxable value plus its GST adds back to it.
+    const cells = lines.map((l) => l.split(','));
+    for (const c of cells) assert.equal(Number(c[4]), Number(stage.stage_amount), 'the invoice value is what the client was billed');
+    const gross = cells.map((c) => Number(c[11]) * (1 + Number(c[10]) / 100)).reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(gross - Number(stage.stage_amount)) <= 0.02, `taxable plus GST is the invoice, to the paisa (${gross} vs ${stage.stage_amount})`);
     // The average of 18 and 5 weighted by those lines is 16.82, which is
     // what this used to report and what the GST tool rejects.
     assert.ok(!lines.some((l) => /,16\.82,/.test(l)), 'no line carries a rate that does not exist');

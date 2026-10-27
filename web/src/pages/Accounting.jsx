@@ -164,7 +164,8 @@ function Drafts({ provider }) {
             { label: 'GSTIN', value: draft.customer.gstin },
             { label: 'Supply', value: `${draft.supply}${draft.place_of_supply ? `, state ${draft.place_of_supply}` : ''}` },
             { label: 'Taxable', value: money(draft.taxable, draft.currency) },
-            { label: `GST ${draft.gst_rate}%`, value: draft.intra ? `CGST ${money(draft.cgst)} + SGST ${money(draft.sgst)}` : `IGST ${money(draft.igst)}` },
+            // A mixed-rate invoice has no single rate: name each one it uses.
+            { label: `GST ${draft.gst_rate != null ? draft.gst_rate : (draft.parts || []).map((p) => p.rate).join('% + ')}%`, value: draft.intra ? `CGST ${money(draft.cgst)} + SGST ${money(draft.sgst)}` : `IGST ${money(draft.igst)}` },
             { label: 'Total', value: <strong>{money(draft.total, draft.currency)}</strong> },
             { label: 'Description', value: draft.description },
           ]} />
