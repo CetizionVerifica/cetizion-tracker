@@ -24,7 +24,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { acceptBooks, applyBookPayments, log, parseBooksFile, reconcile, saveEntries } from '../lib/accounting/books.js';
-import { draftForStage, tallyConfigured, tallyPush, tallyVoucherXml, zohoConfigured, zohoCreateDraft, zohoPull } from '../lib/accounting/providers.js';
+import { draftForStage, normaliseTaxKey, tallyConfigured, tallyPush, tallyVoucherXml, zohoConfigured, zohoCreateDraft, zohoPull } from '../lib/accounting/providers.js';
 import { checkGstin, fyQuarter, gstDate } from '../lib/accounting/gst.js';
 import { RATE_MIX_SQL, defaultGstRate, stageGst } from '../lib/accounting/stageGst.js';
 
@@ -140,6 +140,13 @@ accountingRouter.post('/mappings', async (req, res) => {
   const parsed = z.object({ kind: z.enum(['customer', 'service', 'ledger', 'tax']), tracker_ref: z.string().trim().min(1).max(200), books_ref: z.string().trim().min(1).max(200), books_name: z.string().trim().max(200).optional() }).safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
   const v = parsed.data;
+  // A tax key is stored in one spelling, so "Intra:18" and "intra:18%" are
+  // the same mapping rather than two that a draft would choose between.
+  if (v.kind === 'tax') {
+    const key = normaliseTaxKey(v.tracker_ref);
+    if (!key) throw new ApiError(422, 'Please check the highlighted fields', { fields: { tracker_ref: 'A tax key is intra:<rate>, inter:<rate>, export or exempt, e.g. intra:18' } });
+    v.tracker_ref = key;
+  }
   const { rows: [m] } = await query(
     `INSERT INTO accounting_mappings (kind, tracker_ref, books_ref, books_name, created_by) VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (kind, tracker_ref) DO UPDATE SET books_ref = EXCLUDED.books_ref, books_name = EXCLUDED.books_name RETURNING *`,

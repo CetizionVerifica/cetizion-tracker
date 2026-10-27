@@ -26,6 +26,9 @@ const ASSET = { resource_type: 'raw', type: 'authenticated' };
 const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages', 'attachments', 'deliverables', 'project-costs', 'reports',
   // The travel agency's invoice and credit note PDFs (#196).
   'vendor-invoices', 'vendor-credit-notes', 'questionnaires']);
+// Not in OWNERS: nobody uploads into it through POST /api/documents. Only
+// lib/userDeletion.js writes there, and only the super admin reads it back.
+export const USER_BACKUP_FOLDER = 'user-backups';
 export const isDocumentOwner = (owner) => OWNERS.has(owner);
 
 // A document may be attached, or deleted, only while no record points at it.
@@ -44,7 +47,8 @@ const UNATTACHED = `NOT EXISTS (SELECT 1 FROM quotations q WHERE q.document_id =
                 AND NOT EXISTS (SELECT 1 FROM travel_vendor_credit_notes tcn WHERE tcn.document_id = d.id)
                 AND NOT EXISTS (SELECT 1 FROM travel_vendor_payments tvp WHERE tvp.document_id = d.id)
                 AND NOT EXISTS (SELECT 1 FROM portal_client_actions pca WHERE pca.document_id = d.id)
-                AND NOT EXISTS (SELECT 1 FROM questionnaire_response_files qrf WHERE qrf.document_id = d.id)`;
+                AND NOT EXISTS (SELECT 1 FROM questionnaire_response_files qrf WHERE qrf.document_id = d.id)
+                AND NOT EXISTS (SELECT 1 FROM deleted_users du WHERE du.backup_document_id = d.id)`;
 
 // Browsers display these themselves, and none of them can run script here.
 const INLINE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'text/plain']);
@@ -149,6 +153,12 @@ export const purgeAfterCommit = (id) =>
  * learns which ids are real by asking for them one at a time.
  */
 export async function assertDocumentReadable(scope, id) {
+  // A deleted account's backup is the super admin portal's alone, served by
+  // its own route with its own check and audit row — never by this one,
+  // whoever is asking. Same 404 as an id that does not exist.
+  const { rowCount: isBackup } = await query('SELECT 1 FROM deleted_users WHERE backup_document_id = $1', [id]);
+  if (isBackup) throw new ApiError(404, 'Document not found');
+
   const params = [id];
   const clause = documentClause(scope, params, { alias: 'd' });
   if (!clause) return;

@@ -106,13 +106,15 @@ arrangement exists to prevent.
 | `POST /api/mail/notifications` | **yes** | Each notification must carry the clientState secret stored on the matching mail_folders subscription row; anything else is dropped. |
 | `POST /api/hooks/enquiries` | **yes** | An x-cetizion-signature header of the form t=<unix seconds>,v1=<HMAC-SHA256 of "t.body" under INCOMING_WEBHOOK_SECRET>, compared in constant time over the raw body, with timestamps more than five minutes old refused so a captured call cannot be replayed; the route is 404 unless the secret is set and the feature is switched on in Settings. |
 | `GET /metrics` | **yes** | Either a constant-time match against METRICS_TOKEN, or a staff session re-read from the database whose role is still admin. |
-| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`GET /api/auth/oauth/:provider/start`<br>`POST /api/portal/request-link`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
+| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`GET /api/auth/oauth/:provider/start`<br>`POST /api/portal/request-link`<br>`POST /api/super-admin/logout`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
 | `GET /api/auth/oauth/:provider/callback` | **yes** | The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued. |
 | `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
 | `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/files/invoice/:id`<br>`GET /api/portal/files/po/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages`<br>`GET /api/portal/actions`<br>`POST /api/portal/actions`<br>`POST /api/portal/documents`<br>`DELETE /api/portal/documents/:id` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
 | `GET /api/public/questionnaire/:token`<br>`PUT /api/public/questionnaire/:token/answers`<br>`POST /api/public/questionnaire/:token/files`<br>`POST /api/public/questionnaire/:token/submit` | **yes** | A 40-60 character random token from the emailed or copied link, SHA-256 hashed and matched against questionnaire_links.token_hash, with expiry, revoke and the status of the response checked on every use. |
 | `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
 | `GET /api/auth/me` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
+| `POST /api/super-admin/login` | **yes** | An email and password checked in constant time against SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD (plain or a scrypt hash) in the environment; the route is 404 while either is blank. |
+| `GET /api/super-admin/me`<br>`GET /api/super-admin/users`<br>`POST /api/super-admin/users`<br>`PATCH /api/super-admin/users/:id`<br>`POST /api/super-admin/users/:id/password`<br>`GET /api/super-admin/users/:id/deletion-plan`<br>`DELETE /api/super-admin/users/:id`<br>`GET /api/super-admin/deleted-users`<br>`GET /api/super-admin/deleted-users/:id/backup` | **yes** | The signed cetizion_super_admin cookie (a key derived from SESSION_SECRET, distinct from the staff and portal ones), unexpired and naming the SUPER_ADMIN_EMAIL currently in the environment. |
 | `GET /{*splat}` | no | The built single-page app: HTML, CSS and JavaScript with no data in it. Everything it displays it fetches from /api, which is gated. |
 <!-- /generated:public-routes -->
 
@@ -463,6 +465,18 @@ session is **401**, before any of these is considered.
 | **/api/settings** | | |
 | `GET /api/settings` | any |  |
 | `PATCH /api/settings/:key` | **admin** | A setting re-aims the whole application: which mailbox syncs, whether margin is visible, whether incoming webhooks are on. |
+| **/api/super-admin** | | |
+| `GET /api/super-admin/deleted-users` | public | super-admin-session — Deleted accounts and their backups, for the super admin only. |
+| `GET /api/super-admin/deleted-users/:id/backup` | public | super-admin-session — The Excel backup of a deleted account, fetched from private storage through the API, checked against its SHA-256 and recorded in the activity log. |
+| `POST /api/super-admin/login` | public | super-admin-credentials — This is how a super admin session is obtained. |
+| `POST /api/super-admin/logout` | public | none — It only clears the super admin cookie of the caller. |
+| `GET /api/super-admin/me` | public | super-admin-session — The portal asks whether it is signed in; 401 without a super admin session. |
+| `GET /api/super-admin/users` | public | super-admin-session — Every account, without hashes, for the super admin only. |
+| `POST /api/super-admin/users` | public | super-admin-session — The super admin creates an account; recorded in the activity log. |
+| `DELETE /api/super-admin/users/:id` | public | super-admin-session — The super admin deletes an account, only after its Excel backup is stored privately and read back intact; refused for the last active admin. |
+| `PATCH /api/super-admin/users/:id` | public | super-admin-session — The super admin edits an account or switches it off; one active admin always remains. |
+| `GET /api/super-admin/users/:id/deletion-plan` | public | super-admin-session — What deleting an account would involve, and who may take over its open records. Reads only. |
+| `POST /api/super-admin/users/:id/password` | public | super-admin-session — The super admin sets a new password on an account, ending its sessions. |
 | **/api/tasks** | | |
 | `GET /api/tasks/summary` | any |  |
 | **/api/timeline** | | |
@@ -471,10 +485,7 @@ session is **401**, before any of these is considered.
 | `POST /api/travel-logs/:travelId/billed-stage` | any | Which client invoice recovered a trip's cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk's call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it. |
 | `GET /api/travel-logs/:travelId/full` | any |  |
 | **/api/users** | | |
-| `GET /api/users` | **admin** | The account list, including roles and who is switched off. |
-| `POST /api/users` | **admin** | Creating an account is handing out a key. |
-| `PATCH /api/users/:id` | **admin** | Changing a role or switching an account off. |
-| `POST /api/users/:id/password` | **admin** | Setting somebody's password. |
+| `GET /api/users` | **admin** | The account list, read only, including roles and who is switched off. Accounts are changed only in the super admin portal (/api/super-admin/users). |
 | **/api/vendor-invoices** | | |
 | `GET /api/vendor-invoices/:id/full` | any | A travel agency invoice with its lines, their trips, its credit notes and files (#196). Open as /api/vendor-invoices is. |
 | `POST /api/vendor-invoices/:id/pay` | any | Paying a travel agency: the travel desk's work and the administrator's, so the handler allows admin and HR and refuses sales (#214). Until then the gate was open to every signed-in role, which let a sales user pay an agency — not a decision anybody took, just an open door. The figure is still the absolute total settled and the route writes the difference as a row in travel_vendor_payments; amount_paid and payment_date are derived from those rows and move only through here, never through PATCH /api/vendor-invoices/:id. |

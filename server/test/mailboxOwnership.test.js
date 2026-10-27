@@ -82,6 +82,8 @@ describe('each salesperson\'s own mailbox', { skip: !ADMIN_URL && 'set TEST_DATA
     process.env.DATABASE_URL = url.toString();
     process.env.AUTH_MODE = 'database';
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
+    process.env.SUPER_ADMIN_EMAIL = 'super@example.com';
+    process.env.SUPER_ADMIN_PASSWORD = 'a-good-long-super-password';
     process.env.EMAIL_MODE = 'log';
     delete process.env.OPENROUTER_API_KEY;
 
@@ -349,7 +351,12 @@ describe('each salesperson\'s own mailbox', { skip: !ADMIN_URL && 'set TEST_DATA
   });
 
   test('deactivating A disconnects A\'s mailbox and stops its sync; the mailbox stays listed for the admin', async () => {
-    const res = await as(admin)('patch', `/api/users/${salesA.user.id}`).send({ active: false });
+    // Accounts are switched off in the super admin portal.
+    const superSignIn = await request(app).post('/api/super-admin/login')
+      .send({ email: 'super@example.com', password: 'a-good-long-super-password' });
+    assert.equal(superSignIn.status, 200, JSON.stringify(superSignIn.body));
+    const res = await request(app).patch(`/api/super-admin/users/${salesA.user.id}`)
+      .set('Cookie', superSignIn.headers['set-cookie']).send({ active: false });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(res.body.data.mailboxes_disconnected, [boxA.email]);
 

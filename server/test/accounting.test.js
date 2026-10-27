@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import XLSX from 'xlsx';
 import { checkGstin, fyQuarter, gstDate, gstinCheckDigit, normaliseNumber, splitGstAmount, splitInclusive, splitTax } from '../src/lib/accounting/gst.js';
 import { parseBooksFile } from '../src/lib/accounting/books.js';
-import { tallyVoucherXml } from '../src/lib/accounting/providers.js';
+import { normaliseTaxKey, tallyVoucherXml, zohoInvoiceBody, zohoTaxKey } from '../src/lib/accounting/providers.js';
 
 // Accounting integration (#48); none of these needs a database.
 
@@ -52,6 +52,57 @@ test('a GST amount splits into CGST + SGST or IGST and adds back', () => {
   const odd = splitGstAmount(0.03, { ourState: '27', theirState: '27' });
   assert.equal(Math.round((odd.cgst + odd.sgst) * 100) / 100, 0.03);
   assert.deepEqual(splitGstAmount(500, { ourState: '27', theirState: '29' }), { cgst: 0, sgst: 0, igst: 500, tax: 500, intra: false });
+});
+
+const zohoDraft = (over = {}) => ({
+  stage_id: 7, reference: 'PO-1 · Full', description: 'Full against PO PO-1', currency: 'INR', intra: true, supply_known: true, estimated: false,
+  customer: { books_ref: 'cust-1', gstin: '27AAPFU0939F1ZV' }, place_of_supply: '27', taxable: 110000, gst_rate: null, total: 128500,
+  parts: [{ rate: 18, total: 118000, taxable: 100000, gst: 18000 }, { rate: 5, total: 10500, taxable: 10000, gst: 500 }],
+  ...over,
+});
+const zohoTaxes = new Map([['intra:18', 'tax-gst18'], ['intra:5', 'tax-gst5'], ['inter:18', 'tax-igst18'], ['export', 'exempt-lut']]);
+
+test('a Zoho draft has one line per GST rate, GST included, each with the Zoho tax it maps to', () => {
+  const body = zohoInvoiceBody(zohoDraft(), { item: 'item-1', taxes: zohoTaxes, date: '2026-10-26' });
+  // GST included on each line, so Zoho's total is the stage amount to the paisa.
+  assert.equal(body.is_inclusive_tax, true);
+  assert.deepEqual(body.line_items.map((l) => [l.rate, l.tax_id, l.item_id]), [[118000, 'tax-gst18', 'item-1'], [10500, 'tax-gst5', 'item-1']]);
+  assert.equal(body.line_items.reduce((n, l) => n + l.rate, 0), 128500);
+  assert.match(body.line_items[1].description, /GST 5%/);
+  assert.equal(body.gst_treatment, undefined, 'a domestic invoice keeps the customer\'s own treatment');
+
+  // To another state: the IGST tax.
+  const inter = zohoInvoiceBody(zohoDraft({ intra: false, parts: [{ rate: 18, total: 118000, taxable: 100000 }] }), { taxes: zohoTaxes });
+  assert.equal(inter.line_items[0].tax_id, 'tax-igst18');
+  assert.equal(inter.line_items[0].description, 'Full against PO PO-1', 'one rate, one plain line');
+});
+
+test('an export Zoho draft is filed as an export, with the export exemption and no tax', () => {
+  const body = zohoInvoiceBody(zohoDraft({ currency: 'USD', intra: false, supply_known: false, parts: [{ rate: 0, total: 10000, taxable: 10000 }] }), { taxes: zohoTaxes });
+  assert.equal(body.gst_treatment, 'overseas');
+  assert.deepEqual(body.line_items.map((l) => [l.rate, l.tax_exemption_id, l.tax_id]), [[10000, 'exempt-lut', undefined]]);
+});
+
+test('a Zoho draft is refused rather than sent with a GST it would have to guess', () => {
+  const refused = (draft, taxes, pattern) => assert.throws(() => zohoInvoiceBody(draft, { taxes }), (e) => e.status === 422 && pattern.test(e.message));
+  // A rate with no mapping: named, and only that one.
+  refused(zohoDraft(), new Map([['intra:18', 't']]), /"intra:5"/);
+  assert.throws(() => zohoInvoiceBody(zohoDraft(), { taxes: new Map([['intra:18', 't']]) }), (e) => !/intra:18"/.test(e.message));
+  // Within the state or not cannot be told: not sent as IGST by default.
+  refused(zohoDraft({ intra: false, supply_known: false }), zohoTaxes, /company_state_code/);
+  // Only the default rate, because the quotation has no lines.
+  refused(zohoDraft({ estimated: true, parts: [{ rate: 18, total: 11800, taxable: 10000 }] }), zohoTaxes, /no lines/);
+  // No breakdown at all: never sent as one exempt line.
+  refused(zohoDraft({ parts: [] }), zohoTaxes, /no GST breakdown/);
+  assert.equal(zohoTaxKey({ rate: 0 }, { currency: 'INR' }), 'exempt');
+  assert.equal(zohoTaxKey({ rate: 12 }, { currency: 'INR', intra: false }), 'inter:12');
+});
+
+test('tax mapping keys are stored in one spelling', () => {
+  for (const raw of ['intra:18', 'Intra:18', ' intra:18.0 ', 'intra:18%', 'INTRA : 18']) assert.equal(normaliseTaxKey(raw), 'intra:18', raw);
+  assert.equal(normaliseTaxKey('inter:5'), 'inter:5');
+  assert.equal(normaliseTaxKey('Export'), 'export');
+  for (const bad of ['gst18', 'intra', 'intra:', 'other:18', '']) assert.equal(normaliseTaxKey(bad), null, bad);
 });
 
 test('financial-year quarters start in April', () => {

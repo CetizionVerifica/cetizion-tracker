@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Button } from '../../components/ui/button.tsx';
 import { Input } from '../../components/ui/input.tsx';
 import { Label } from '../../components/ui/label.tsx';
@@ -88,8 +87,7 @@ export function Profile() {
       </form>
 
       <p className="mt-6 text-[12px]/[1.6] text-muted-foreground">
-        Your role and email address are set by an admin under{' '}
-        <Link to="/settings/users">Settings → Users &amp; roles</Link>.
+        Your role and email address are set by the super admin.
       </p>
     </Pane>
   );

@@ -185,12 +185,17 @@ function Mappings() {
   }
   return (
     <>
-      <Card title="Add a mapping" hint="Customer: which customer in the books a client is (its Zoho customer id, or Tally ledger name). Service 'default': the Zoho item used on draft invoices.">
+      <Card title="Add a mapping" hint="Customer: which customer in the books a client is (its Zoho customer id, or Tally ledger name). Service 'default': the Zoho item used on draft invoices. Tax: the Zoho tax for each GST rate on a draft invoice — 'intra:18' (18% within the state, Zoho's GST group), 'inter:18' (18% to another state, Zoho's IGST), and so on for each rate you use; 'export' and 'exempt' take Zoho's tax exemption id.">
+        {v.kind === 'tax' && (
+          <p className="small muted" style={{ marginBottom: 8 }}>
+            Zoho needs a tax on every line, or it applies the item's own tax to the whole invoice. A draft whose rate has no mapping is refused with the name to map.
+          </p>
+        )}
         <div className="form-grid">
           <Field label="Kind"><Select value={v.kind} placeholder={null} options={['customer', 'service', 'ledger', 'tax']} onChange={(e) => setV({ ...v, kind: e.target.value, tracker_ref: '' })} /></Field>
           {v.kind === 'customer'
             ? <Field label="Client"><Select value={v.tracker_ref} options={lookups.companies.map((c) => ({ value: String(c.id), label: c.name }))} onChange={(e) => setV({ ...v, tracker_ref: e.target.value })} /></Field>
-            : <Field label="Tracker name"><Input value={v.tracker_ref} onChange={(e) => setV({ ...v, tracker_ref: e.target.value })} placeholder="default" /></Field>}
+            : <Field label="Tracker name"><Input value={v.tracker_ref} onChange={(e) => setV({ ...v, tracker_ref: e.target.value })} placeholder={v.kind === 'tax' ? 'intra:18' : 'default'} /></Field>}
           <Field label="Id in the books"><Input value={v.books_ref} onChange={(e) => setV({ ...v, books_ref: e.target.value })} /></Field>
           <Field label="Name in the books"><Input list="books-names" value={v.books_name} onChange={(e) => setV({ ...v, books_name: e.target.value })} /><datalist id="books-names">{(data?.unmatched ?? []).map((u) => <option key={u.customer_name} value={u.customer_name} />)}</datalist></Field>
         </div>

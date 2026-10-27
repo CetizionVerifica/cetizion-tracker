@@ -59,10 +59,11 @@ export function ProjectProfit({ projectId, onChanged }) {
 
   return (
     <>
-      <Card title="Margin" hint="PO value against delivery cost, in INR. Committed cost is billed or claimed but not yet paid.">
+      <Card title="Margin" hint="PO value before GST against delivery cost, in INR. Committed cost is billed or claimed but not yet paid.">
         <KeyValues items={[
-          { label: 'Revenue (PO value)', value: money(p.revenue) },
-          { label: 'Invoiced / received', value: `${money(p.invoiced)} / ${money(p.received)}` },
+          { label: 'Revenue (PO value before GST)', value: money(p.revenue) },
+          // Billed and banked as the client paid them, GST included, unlike revenue above.
+          { label: 'Invoiced / received (with GST)', value: `${money(p.invoiced)} / ${money(p.received)}` },
           { label: 'Cost paid', value: money(p.cost_paid) },
           { label: 'Cost committed', value: money(p.cost_committed) },
           { label: 'Margin', value: <span className="strong">{money(p.margin)}</span> },
@@ -77,7 +78,13 @@ export function ProjectProfit({ projectId, onChanged }) {
           { key: 'what', header: 'What', className: 'wrap', render: (r) => (r.kind === 'manual' ? <>{r.description}<div className="small muted">{COST_CATEGORIES.find((c) => c.value === r.category)?.label}</div></> : <>{r.ref}<div className="small muted">{r.kind === 'expense_claim' ? `${r.expense_category || 'claim'} · ${r.approval_status}` : r.destination} · trip {r.travel_id}</div></>) },
           { key: 'vendor', header: 'Paid to' },
           { key: 'incurred_on', header: 'Date', render: (r) => date(r.incurred_on) },
-          { key: 'amount', header: 'Amount', align: 'right', render: (r) => (r.gap ? <Badge tone="warning">{r.gap}</Badge> : money(r.amount, r.currency || 'INR')) },
+          // A cost in another currency also shows the rupees it counts for in the margin.
+          { key: 'amount', header: 'Amount', align: 'right', render: (r) => (r.gap ? <Badge tone="warning">{r.gap}</Badge> : (
+            <>
+              {money(r.amount, r.currency || 'INR')}
+              {r.currency && r.currency !== 'INR' && r.amount_inr != null && <div className="small muted">{money(r.amount_inr)}</div>}
+            </>
+          )) },
           { key: 'state', header: 'Paid', align: 'right', render: (r) => (r.kind === 'manual' ? (r.status === 'paid' ? 'paid' : 'committed') : money(r.amount_paid)) },
           { key: 'file', header: '', render: (r) => (r.document_id ? <a className="btn btn--sm btn--ghost" href={api.documentUrl(r.document_id)} target="_blank" rel="noopener noreferrer">File</a> : null) },
           { key: 'act', header: '', align: 'right', render: (r) => r.kind === 'manual' && <div className="table__actions">{mayWriteCost && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setForm(r)}>Edit</button>}{mayDeleteCost && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving(r)}>✕</button>}</div> },

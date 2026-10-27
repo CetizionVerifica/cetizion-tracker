@@ -31,6 +31,7 @@ describe('the activity log in shared mode', { skip: !ADMIN_URL && 'set TEST_DATA
   let app;
   let pool;
   let cookie;
+  let superCookie;
 
   before(async () => {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
@@ -61,6 +62,8 @@ describe('the activity log in shared mode', { skip: !ADMIN_URL && 'set TEST_DATA
     process.env.AUTH_PASSWORD = 'the-shared-password-in-env';
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
     process.env.EMAIL_MODE = 'log';
+    process.env.SUPER_ADMIN_EMAIL = 'super@example.com';
+    process.env.SUPER_ADMIN_PASSWORD = 'a-good-long-super-password';
 
     ({ default: app } = await import('../src/app.js'));
     ({ pool } = await import('../src/db.js'));
@@ -69,6 +72,10 @@ describe('the activity log in shared mode', { skip: !ADMIN_URL && 'set TEST_DATA
       .send({ username: 'shared-admin', password: 'the-shared-password-in-env' });
     assert.equal(signIn.status, 200, 'the shared password still signs in');
     cookie = signIn.headers['set-cookie'];
+    const superSignIn = await request(app).post('/api/super-admin/login')
+      .send({ email: 'super@example.com', password: 'a-good-long-super-password' });
+    assert.equal(superSignIn.status, 200, JSON.stringify(superSignIn.body));
+    superCookie = superSignIn.headers['set-cookie'];
   });
 
   after(async () => {
@@ -87,43 +94,44 @@ describe('the activity log in shared mode', { skip: !ADMIN_URL && 'set TEST_DATA
   };
   const logged = async () => (await db.query('SELECT * FROM activity_log ORDER BY id')).rows;
 
-  test('an account the shared admin creates is recorded, with no account behind the actor', async () => {
+  test('an account the super admin creates is recorded, with no account behind the actor', async () => {
     await clean();
 
-    const res = await request(app).post('/api/users').set('Cookie', cookie)
+    const res = await request(app).post('/api/super-admin/users').set('Cookie', superCookie)
       .send({ name: 'Nina', email: 'nina@example.com', password: PASSWORD, role: 'admin' });
 
     assert.equal(res.status, 201, JSON.stringify(res.body));
     const rows = await logged();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].action, 'user.created');
-    assert.equal(rows[0].actor_user_id, null, 'no users row stands in for the shared password');
-    assert.equal(rows[0].actor_type, 'shared_admin');
+    assert.equal(rows[0].actor_user_id, null, 'no users row stands in for the super admin');
+    assert.equal(rows[0].actor_type, 'super_admin');
     assert.equal(rows[0].entity_id, String(res.body.data.id));
-    assert.equal(rows[0].metadata.actor_name, 'shared-admin', 'the name is a label, not an identity');
+    assert.equal(rows[0].metadata.actor_name, 'Super admin (super@example.com)', 'the name is a label, not an identity');
 
     assert.equal(
       (await db.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 1,
-      'only the account that was asked for — the shared admin is not one of them'
+      'only the account that was asked for — the super admin is not one of them'
     );
+
+    // The shared admin of the tracker itself cannot make one.
+    const refused = await request(app).post('/api/users').set('Cookie', cookie)
+      .send({ name: 'Omar', email: 'omar@example.com', password: PASSWORD, role: 'admin' });
+    assert.equal(refused.status, 404);
   });
 
   test('the shared admin’s other audited acts are recorded the same way', async () => {
     await clean();
-    const nina = await request(app).post('/api/users').set('Cookie', cookie)
-      .send({ name: 'Nina', email: 'nina@example.com', password: PASSWORD, role: 'admin' });
     const gone = (await db.query(`INSERT INTO companies (name) VALUES ('Acme Limited') RETURNING id`)).rows[0];
     const kept = (await db.query(`INSERT INTO companies (name) VALUES ('Acme Ltd') RETURNING id`)).rows[0];
 
-    await request(app).post(`/api/users/${nina.body.data.id}/password`).set('Cookie', cookie)
-      .send({ password: 'another-good-long-password' });
     await request(app).post(`/api/companies/${gone.id}/merge`).set('Cookie', cookie).send({ into: kept.id });
     await request(app).post('/api/emails/test').set('Cookie', cookie).send({ to: 'someone@client.example' });
 
     const rows = await logged();
     assert.deepEqual(
       rows.map((r) => r.action),
-      ['user.created', 'user.password_reset', 'company.merged', 'email.test_sent']
+      ['company.merged', 'email.test_sent']
     );
     for (const row of rows) {
       assert.equal(row.actor_user_id, null, `${row.action} names no database account`);
@@ -132,15 +140,16 @@ describe('the activity log in shared mode', { skip: !ADMIN_URL && 'set TEST_DATA
     }
 
     const written = JSON.stringify(rows);
-    for (const secret of ['the-shared-password-in-env', 'another-good-long-password', PASSWORD, '$2b$']) {
+    for (const secret of ['the-shared-password-in-env', PASSWORD, '$2b$']) {
       assert.ok(!written.includes(secret), `${secret} must not reach the activity log`);
     }
   });
 
   test('the shared admin may read the log, and reads their own acts back', async () => {
     await clean();
-    await request(app).post('/api/users').set('Cookie', cookie)
-      .send({ name: 'Nina', email: 'nina@example.com', password: PASSWORD, role: 'admin' });
+    const gone = (await db.query(`INSERT INTO companies (name) VALUES ('Acme Limited') RETURNING id`)).rows[0];
+    const kept = (await db.query(`INSERT INTO companies (name) VALUES ('Acme Ltd') RETURNING id`)).rows[0];
+    await request(app).post(`/api/companies/${gone.id}/merge`).set('Cookie', cookie).send({ into: kept.id });
 
     const res = await request(app).get('/api/activity').set('Cookie', cookie);
 

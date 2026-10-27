@@ -46,7 +46,7 @@ describe('the access policy covers every mounted route', () => {
     // and letting the coverage checks below pass over an empty list.
     assert.ok(discovered.length > 100, `only ${discovered.length} routes discovered from express@${expressVersion()}`);
     const keys = new Set(discovered.map(check.keyOf));
-    for (const anchor of ['GET /api/health', 'POST /api/auth/login', 'POST /api/users', 'GET /metrics', 'DELETE /api/quotations/:id']) {
+    for (const anchor of ['GET /api/health', 'POST /api/auth/login', 'POST /api/super-admin/users', 'GET /metrics', 'DELETE /api/quotations/:id']) {
       assert.ok(keys.has(anchor), `discovery missed ${anchor} (express@${expressVersion()})`);
     }
     // Nested routers, parameterised paths and the generated CRUD routers all
