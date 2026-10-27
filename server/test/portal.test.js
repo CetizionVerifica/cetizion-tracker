@@ -446,6 +446,19 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     assert.deepEqual(rows.map((r) => r.username), ['olu@cetizion.example', null]);
   });
 
+  test('a payment advice cannot report more paid plus TDS than the invoices have outstanding', async () => {
+    const { cookie } = await portalLogin(2002);
+    const beta = await stageId('INV-B-1');
+    const post = (body) => request(app).post('/api/portal/actions').set('Cookie', cookie).send(body);
+    const before = (await pool.query('SELECT count(*)::int AS n FROM portal_client_actions')).rows[0].n;
+    // INV-B-1 is 2,00,000 with 5 already reported, nothing received.
+    const over = await post({ kind: 'payment_advice', stage_ids: [beta], amount: 200000, tds_amount: 10000, paid_on: '2026-09-05' });
+    assert.equal(over.status, 422);
+    assert.match(over.body.error.fields.amount, /₹2,10,000\.00, more than the ₹2,00,000\.00 due/);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM portal_client_actions')).rows[0].n, before, 'nothing stored');
+    await post({ kind: 'payment_advice', stage_ids: [beta], amount: 190000, tds_amount: 10000, paid_on: '2026-09-05' }).expect(201);
+  });
+
   // ---------------------------------------------------------------- #198 phase 3: bringing them in
   test('recording an invoice emails the client\'s portal contacts once, and only when the portal and its Invoices are on', async () => {
     await pool.query("UPDATE settings SET value = 'https://tracker.example' WHERE key = 'public_app_url'");

@@ -43,6 +43,7 @@ import { businessToday } from '../lib/businessDate.ts';
 import { config } from '../config.js';
 import { fetchDocument, isInlineType, purgeAfterCommit, uploadDocument } from '../lib/documents.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
+import { money as formatMoney } from '../lib/reportFormat.js';
 import {
   companyOwnsDocument, invoiceDocument, ownedInvoices, ownsUploadTarget, poDocument, portalActions, portalAudience, portalCertificates,
   portalDocuments, portalInvoices, portalProjects, SECTION_DATA, SECTIONS, statementPdf,
@@ -344,6 +345,18 @@ portalRouter.post('/actions', section('invoices'), clientWrites, oneFile('file')
   if (Object.keys(missing).length) throw new ApiError(422, 'Please check the highlighted fields', { fields: missing });
   const invoices = await ownedInvoices(p.company_id, v.stage_ids, v.po_number);
   if (!invoices) throw new ApiError(404, 'Not found');
+  // TDS settles an invoice as the payment does, so what is reported paid
+  // plus the TDS is at most what the invoices have outstanding; otherwise
+  // the advice pre-fills a receipt that over-settles them.
+  if (v.kind === 'payment_advice' && v.tds_amount > 0) {
+    const due = Math.round(invoices.reduce((sum, i) => sum + Number(i.outstanding), 0) * 100) / 100;
+    if (v.amount + v.tds_amount > due + 0.01) {
+      const said = (n) => formatMoney(Math.round(n * 100) / 100, invoices[0]?.currency || 'INR', { decimals: 2 });
+      throw new ApiError(422, 'Please check the highlighted fields', {
+        fields: { amount: `The amount paid plus TDS comes to ${said(v.amount + v.tds_amount)}, more than the ${said(due)} due. Enter the amount paid after TDS.` },
+      });
+    }
+  }
   const pos = [...new Set([v.po_number, ...invoices.map((i) => i.po_number)].filter(Boolean))];
   const poNumber = v.po_number || (pos.length === 1 ? pos[0] : null);
   const about = invoices.length ? `invoice ${invoices.map((i) => i.invoice_no).join(', ')}` : `PO ${poNumber}`;

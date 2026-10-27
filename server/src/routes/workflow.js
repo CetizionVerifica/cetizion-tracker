@@ -13,6 +13,7 @@ import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { actAs, logCreated, logInvoiceRaised, logPaymentRecorded, logStageMoves } from '../lib/recordActs.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { normalizeName } from '../lib/names.ts';
+import { money as formatMoney } from '../lib/reportFormat.js';
 import { onboardingProgress, withDerivedSteps } from '../lib/onboarding.js';
 
 export const projectRouter = Router();
@@ -556,14 +557,52 @@ stageRouter.post('/:id/payment', async (req, res) => {
       [body.portal_action_id, stage.id]);
     if (!rowCount) throw new ApiError(422, 'Please check the highlighted fields', { fields: { portal_action_id: 'That payment advice is not about this invoice, or is already settled' } });
   }
-  const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
-  if (delta > 0 || Number(body.tds_amount || 0) > 0) {
-    // The receipt and the advice it settles, in one transaction (#198).
-    await transaction(async (client) => {
+  const tds = Number(body.tds_amount || 0);
+  await transaction(async (client) => {
+    // The figures the checks below read, from the stage locked for this
+    // transaction: two receipts at once each see what the other recorded,
+    // so they cannot both settle the same outstanding.
+    const { rows: [locked] } = await client.query(
+      `SELECT ps.amount_received,
+              (SELECT ROUND(spo.po_value * ps.stage_percent, 2) FROM purchase_orders spo WHERE spo.po_number = ps.po_number) AS stage_amount,
+              (SELECT spo.currency FROM purchase_orders spo WHERE spo.po_number = ps.po_number) AS currency
+         FROM payment_stages ps WHERE ps.id = $1 FOR UPDATE OF ps`,
+      [stage.id]);
+    const delta = body.mode === 'set' ? Number(body.amount_received) - Number(locked.amount_received) : Number(body.amount_received);
+    // TDS settles the stage as cash does (the trigger sums amount + tds_amount),
+    // so in 'set' the figure is the total settled and the cash is what is left
+    // of the change after the TDS — as the vendor payment route does. A receipt
+    // with TDS settles no more than the stage has outstanding: a pre-filled
+    // outstanding plus the TDS typed on top read as more received than billed.
+    const cash = body.mode === 'set' ? Math.round((delta - tds) * 100) / 100 : delta;
+    const said = (n) => formatMoney(Math.round(n * 100) / 100, locked.currency || 'INR', { decimals: 2 });
+    if (tds > 0) {
+      if (delta < 0) {
+        throw new ApiError(422, 'Please check the highlighted fields', {
+          fields: { tds_amount: 'Lowering the total received is a correction: record it without TDS' },
+        });
+      }
+      if (cash < 0) {
+        throw new ApiError(422, 'Please check the highlighted fields', {
+          fields: { tds_amount: `The tax deducted cannot be more than the ${said(delta)} this receipt settles` },
+        });
+      }
+      const outstanding = Number(locked.stage_amount) - Number(locked.amount_received);
+      if (cash + tds > outstanding + 0.01) {
+        throw new ApiError(422, 'Please check the highlighted fields', {
+          fields: {
+            amount_received: `Received plus TDS comes to ${said(cash + tds)}, more than the ${said(Math.max(outstanding, 0))} outstanding`,
+            tds_amount: 'Take the TDS off the amount received',
+          },
+        });
+      }
+    }
+    if (delta > 0 || tds > 0) {
+      // The receipt and the advice it settles, in one transaction (#198).
       const { rows: [payment] } = await client.query(
         `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by, portal_action_id)
          VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8,$9) RETURNING id, amount, tds_amount, received_on, mode`,
-        [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null, body.portal_action_id ?? null]
+        [stage.id, Math.max(cash, 0), tds, body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null, body.portal_action_id ?? null]
       );
       await logPaymentRecorded(client, req.user, {
         stage, amount: payment.amount, tds: payment.tds_amount, receivedOn: payment.received_on, mode: payment.mode, paymentId: payment.id,
@@ -577,12 +616,10 @@ stageRouter.post('/:id/payment', async (req, res) => {
                                  AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.portal_action_id = a.id AND p.stage_id = x.stage_id))`,
           [body.portal_action_id, req.user?.username || null]);
       }
-    });
-  } else if (body.mode === 'set' && delta !== 0) {
-    // Bringing the total down is a negative row in the ledger, not a figure
-    // written over the top of it: the stage total is computed from the rows,
-    // so anything written by hand is undone by the next receipt.
-    await transaction(async (client) => {
+    } else if (body.mode === 'set' && delta !== 0) {
+      // Bringing the total down is a negative row in the ledger, not a figure
+      // written over the top of it: the stage total is computed from the rows,
+      // so anything written by hand is undone by the next receipt.
       const { rows: [payment] } = await client.query(
         `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
          VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5) RETURNING id, amount, received_on, mode`,
@@ -592,8 +629,8 @@ stageRouter.post('/:id/payment', async (req, res) => {
       await logPaymentRecorded(client, req.user, {
         stage, amount: payment.amount, receivedOn: payment.received_on, mode: payment.mode, paymentId: payment.id, adjustment: true,
       });
-    });
-  }
+    }
+  });
   const rows = [stage];
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);
   res.json({ data: full[0] });
