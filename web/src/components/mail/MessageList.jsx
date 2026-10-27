@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button.tsx';
 import { StateMarks } from './MessageView.jsx';
+import { AttachmentNames } from './AttachmentStrip.jsx';
 
 /** How long ago, the way a mail list writes it: minutes today, then the time, then the day, then the date. */
 export const since = (iso) => {
@@ -22,6 +23,16 @@ export const initials = (name) => {
 };
 
 /**
+ * How tall a folder row is, in px, whatever it holds (#250): the list asks
+ * for as many rows as fit the screen, and that sum only works if a row
+ * with no snippet or attachment is as tall as one with both. Set on the
+ * row itself, so the CSS and the arithmetic cannot drift apart.
+ *
+ * 12 + 20 name + 20 subject + 19 snippet + 28 attachments/company + 12 + 1 border.
+ */
+export const MESSAGE_ROW_H = 112;
+
+/**
  * One conversation in a folder (docs/inbox-outlook-plan.md §3.3), as
  * Outlook lists it: unread in bold with a dot, the flag, a paperclip,
  * importance, who it is from — or who it went to, in Sent Items — the
@@ -29,6 +40,9 @@ export const initials = (name) => {
  *
  * `outbound` tells the row to lead with the recipient: a Sent Items row
  * that said "Bea Sales" on every line said nothing.
+ *
+ * Every band is always there, empty when there is nothing for it, so every
+ * row is MESSAGE_ROW_H tall.
  */
 export const MessageRow = forwardRef(function MessageRow({ row, selected, outbound, onSelect }, ref) {
   const lead = outbound
@@ -47,8 +61,9 @@ export const MessageRow = forwardRef(function MessageRow({ row, selected, outbou
           onSelect(row);
         }
       }}
+      style={{ height: MESSAGE_ROW_H }}
       className={cn(
-        'flex w-full cursor-pointer gap-3 border-b border-border px-5 py-3 text-left transition-colors duration-150',
+        'flex w-full cursor-pointer gap-3 overflow-hidden border-b border-border px-5 py-3 text-left transition-colors duration-150',
         selected ? 'border-l-2 border-l-primary bg-card' : 'border-l-2 border-l-transparent hover:bg-card'
       )}
     >
@@ -59,35 +74,34 @@ export const MessageRow = forwardRef(function MessageRow({ row, selected, outbou
         {initials(outbound ? (row.to_emails?.[0] || '') : (row.from_name || row.company_name || row.from_email))}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
-          <span className="flex w-2 shrink-0 items-center self-center" aria-hidden="true">
+        <span className="flex h-5 items-center gap-2">
+          <span className="flex w-2 shrink-0 items-center" aria-hidden="true">
             {row.unread && <span className="size-1.5 rounded-full bg-primary" />}
           </span>
           <span
-            className={cn('min-w-0 flex-1 truncate text-[13px] text-foreground', row.unread ? 'font-semibold' : 'font-medium')}
+            className={cn('min-w-0 flex-1 truncate text-[13px]/5 text-foreground', row.unread ? 'font-semibold' : 'font-medium')}
             title={[row.company_name, lead].filter(Boolean).join(' · ')}
           >
             {lead}
             {row.in_folder > 1 && <span className="num ml-1.5 font-normal text-muted-foreground">{row.in_folder}</span>}
           </span>
-          <StateMarks m={{ importance: row.high ? 'high' : row.importance, flag_status: row.flagged ? 'flagged' : row.flag_status }} className="shrink-0 self-center" />
+          <StateMarks m={{ importance: row.high ? 'high' : row.importance, flag_status: row.flagged ? 'flagged' : row.flag_status }} className="shrink-0" />
           {row.has_attachments && (
-            <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
+            <Paperclip className="size-3 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
           )}
-          <span className="shrink-0 text-[11.5px] text-muted-foreground">{since(row.sent_at)}</span>
+          <span className="shrink-0 text-[11.5px]/5 text-muted-foreground">{since(row.sent_at)}</span>
         </span>
-        <span className={cn('mt-0.5 block truncate text-[12.5px]', row.unread ? 'font-medium text-foreground' : 'text-secondary-text')} title={row.subject || '(no subject)'}>
+        <span className={cn('mt-0.5 block h-[18px] truncate text-[12.5px]/[18px]', row.unread ? 'font-medium text-foreground' : 'text-secondary-text')} title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
         </span>
-        {row.snippet && (
-          <span className="mt-0.5 block truncate text-[12px] text-muted-foreground">{row.snippet}</span>
-        )}
-        {(row.company_name || row.entity_id) && (
-          <span className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            {row.company_name && <span className="truncate">{row.company_name}</span>}
-            {row.entity_id && <span className="num">{row.entity_id}</span>}
-          </span>
-        )}
+        <span className="mt-0.5 block h-[17px] truncate text-[12px]/[17px] text-muted-foreground">{row.snippet}</span>
+        {/* Attachments and what the tracker matched it to share one line,
+            so neither makes a row taller than the others. */}
+        <span className="mt-1 flex h-6 min-w-0 items-center gap-1.5 overflow-hidden text-[11px] text-muted-foreground">
+          <AttachmentNames names={row.attachment_names} className="mt-0 min-w-0 shrink flex-nowrap overflow-hidden" />
+          {row.company_name && <span className="min-w-0 truncate">{row.company_name}</span>}
+          {row.entity_id && <span className="num shrink-0">{row.entity_id}</span>}
+        </span>
       </span>
     </div>
   );
@@ -98,12 +112,14 @@ export const MessageRow = forwardRef(function MessageRow({ row, selected, outbou
  *
  * Under the list rather than over it, where a mail client keeps it: the
  * list is read top down and the pager is what you reach at the bottom.
+ * A fixed height, so the list above it knows how much room it has before
+ * the first page arrives (`PagerSpace` holds the same room until then).
  */
 export function Pager({ page, pages, total, pageSize, onPage }) {
   const first = (page - 1) * pageSize + 1;
   const last = Math.min(total, page * pageSize);
   return (
-    <nav aria-label="Pages of conversations" className="flex items-center gap-2 border-t border-border px-5 py-2.5">
+    <nav aria-label="Pages of conversations" className="flex h-13 shrink-0 items-center gap-2 border-t border-border px-5">
       <span className="num text-[12px] text-muted-foreground" aria-live="polite">
         {first}–{last} of {total}
       </span>
@@ -117,4 +133,9 @@ export function Pager({ page, pages, total, pageSize, onPage }) {
       </Button>
     </nav>
   );
+}
+
+/** The pager's room, kept while there is no page to show, so the list does not grow and shrink under it. */
+export function PagerSpace() {
+  return <div aria-hidden="true" className="h-13 shrink-0 border-t border-border" />;
 }

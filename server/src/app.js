@@ -27,9 +27,12 @@ import { userRouter } from './routes/users.js';
 import { activityRouter } from './routes/activity.js';
 import { ownershipRouter } from './routes/ownership.js';
 import { companyRouter } from './routes/companies.js';
+import { ownerRouter } from './routes/owners.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
+import { clientEmailRouter } from './routes/clientEmails.js';
 import { quotationDocRouter } from './routes/quotations.js';
 import { pipelineRouter } from './routes/pipeline.js';
+import { journeyRouter } from './routes/journey.js';
 import { registerRouter } from './routes/register.js';
 import { approvalRouter } from './routes/approvals.js';
 import { taskSummaryRouter, timelineRouter } from './routes/timeline.js';
@@ -37,7 +40,7 @@ import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';
 import { reportsRouter } from './routes/reports.js';
-import { misReportsRouter } from './routes/misReports.js';
+import { misReportsRouter, myMisRouter } from './routes/misReports.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { followUpsRouter } from './routes/followUps.js';
 import { insightsRouter } from './routes/insights.js';
@@ -51,6 +54,9 @@ import { profitabilityRouter } from './routes/profitability.js';
 import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
 import { portalAdminRouter, portalRouter } from './routes/portal.js';
+import { portalActionsRouter } from './routes/portalActions.js';
+import { publicQuestionnaireRouter } from './routes/publicQuestionnaire.js';
+import { questionnaireResponseRouter, questionnaireRouter, questionnaireVersionRouter } from './routes/questionnaires.js';
 import { accountingRouter } from './routes/accounting.js';
 import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
 import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
@@ -127,6 +133,8 @@ app.use('/api/auth', authRouter);
 // Public by design: a client opens their own quotation with a single-use
 // token (#53). The router rate-limits itself and shows nothing else.
 app.use('/api/public/accept', publicAcceptanceRouter);
+// A client filling in a service questionnaire from their link (#208): the token is the credential.
+app.use('/api/public/questionnaire', publicQuestionnaireRouter);
 // Microsoft Graph posts mail notifications here; each is checked against its subscription's secret.
 app.use('/api/mail', mailWebhookRouter);
 // Signed incoming events (#49), off unless switched on in Settings.
@@ -161,14 +169,20 @@ app.use('/api/activity', activityRouter);
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.
 app.use('/api/companies', companyRouter);
+app.use('/api/owners', ownerRouter);
 app.use('/api/emails', emailRouter);
+app.use('/api/client-emails', clientEmailRouter);
 app.use('/api/pipeline', pipelineRouter);
+// Every sale from enquiry to paid PO, by step: the Pipeline's Journey view and each record's rail.
+app.use('/api/journey', journeyRouter);
 app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);
 app.use('/api/cashflow', cashflowRouter);
 app.use('/api/reports', reportsRouter);
 // The scheduled sales reports (docs/mis-reports-plan.md): previews, runs, sending.
+// Each person's own daily MIS (mis-report-sender-plan.md §B6), before the admin-only router.
+app.use('/api/mis-reports/mine', myMisRouter);
 app.use('/api/mis-reports', misReportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/follow-ups', followUpsRouter);
@@ -183,7 +197,13 @@ app.use('/api/inbox', inboxRouter);
 app.use('/api/profitability', profitabilityRouter);
 app.use('/api/visits', visitsRouter);
 app.use('/api/webhooks', webhooksRouter);
+// What clients said in the portal (#198): staff who can open the PO, so ahead of the admin-only router.
+app.use('/api/portal-admin/actions', portalActionsRouter);
 app.use('/api/portal-admin', portalAdminRouter);
+// Service questionnaires (#208): the forms (admins write), and the responses sent from enquiries.
+app.use('/api/questionnaires', questionnaireRouter);
+app.use('/api/questionnaire-versions', questionnaireVersionRouter);
+app.use('/api/questionnaire-responses', questionnaireResponseRouter);
 app.use('/api/accounting', accountingRouter);
 app.use('/api/api-tokens', apiTokenRouter);
 app.use('/api/client-errors', clientErrorRouter);

@@ -89,6 +89,9 @@ describe('GET /api/search', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run'
     await exec(dbUrl, `
       INSERT INTO travel_logs (travel_id, employee_name, destination, travel_start_date)
       VALUES ('TRV-2026-031', 'R. Bhatt', 'Renukoot', '2026-05-01')`);
+    await exec(dbUrl, `
+      INSERT INTO enquiries (enquiry_no, client_name, service, status, enquiry_date)
+      VALUES ('CTZ/ENQ/2026/931', 'Example Ceramics', 'ISO 9001 certification', 'New', '2026-05-02')`);
     // Two POs where one number is the start of the other (#75): the exact
     // one must come first however the list would otherwise sort them.
     await exec(dbUrl, `
@@ -126,6 +129,13 @@ describe('GET /api/search', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run'
     assert.equal(hit.title, 'CTZ/QT/2026/091');
     assert.equal(hit.state, 'Submitted', 'the row says what it is waiting on');
     assert.ok(hit.href.includes(encodeURIComponent('CTZ/QT/2026/091')), 'and where it goes, escaped');
+  });
+
+  test('an enquiry opens its own page, its number escaped', async () => {
+    const body = await find('CTZ/ENQ/2026/931');
+    const hit = body.data.find((h) => h.type === 'enquiry');
+    assert.ok(hit, JSON.stringify(body.data));
+    assert.equal(hit.href, `/enquiries/${encodeURIComponent('CTZ/ENQ/2026/931')}`);
   });
 
   test('a destination finds the trip, which no other object would match', async () => {

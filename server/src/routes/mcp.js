@@ -76,7 +76,11 @@ function buildServer(token) {
     // admin's here.
     if (write && !token.can_write) return;
     if (admin && token.role !== 'admin') return;
-    server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: out } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
+    // The top level is loose like every row (below): a client validates
+    // against the JSON Schema tools/list publishes, and a plain shape there
+    // is closed ("additionalProperties": false), so one field the schema
+    // does not name made Claude Desktop throw the whole answer away (#243).
+    server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: z.looseObject(out) } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
       try {
         const result = await fn(args);
         await query('INSERT INTO api_token_log (token_id, tool, arguments, ok) VALUES ($1,$2,$3,true)', [token.id, name, JSON.stringify(args)]);
@@ -196,7 +200,7 @@ function buildServer(token) {
     { write: true, out: { quotation_no: str, next_step: str, expected_close_date: str } });
   tool('complete_task', 'Mark a task done. Calling it twice is calling it once: a task already done reports already_done rather than failing.',
     { task_id: z.number().int().describe('Task id, from list_tasks or create_task') },
-    async (a) => { const r = await data.completeTask(scope, a); return r ? json(r) : notFound(`Task ${a.task_id}`); },
+    async (a) => { const r = await data.completeTask(scope, token, a); return r ? json(r) : notFound(`Task ${a.task_id}`); },
     { write: true, out: { id: num, title: str, status: str, completed_at: str, already_done: z.boolean(), entity: str, entity_id: str } });
 
   // ---- bulk import (#135) ------------------------------------------

@@ -88,6 +88,41 @@ travel logs, expense claims, vendor invoices and payment stages are left
 alone until Phase 2 gives records an owner, because "who changed this" is
 only half an answer while "whose is it" has none.
 
+## Who did what to the sales records
+
+Added later, for the daily MIS (`/mnt/project-files/plans/mis-report-sender-plan.md`
+§B3.2), by `server/src/lib/recordActs.js` in the transaction of the change:
+
+```
+record.created        record.updated        quotation.stage_changed
+invoice.raised        payment.recorded
+```
+
+* **`record.created` / `record.updated`**: a company, contact, enquiry,
+  quotation, project, PO, payment stage or payment saved through its form
+  (the resources with `audit` in `resources.js`), and the records other
+  routes make: a project from a won quotation, a PO registered, a split of
+  payment stages, an enquiry made from an inbox email. An edit keeps only the
+  fields that changed, as `metadata.changes: { field: { from, to } }`, text
+  cut at 200 characters; a save that changed nothing writes nothing. Sending,
+  accepting and revising a quotation are `record.updated` with
+  `metadata.event` `sent`, `accepted` or `revised`.
+* **`quotation.stage_changed`**: every stage move, read back from
+  `quotation_stage_history`, with the stage names it left and entered and,
+  for a loss, the reason. The move replaces the stage fields in that save's
+  `record.updated`.
+* **`invoice.raised`** and **`payment.recorded`**: on the payment stage, with
+  the PO, stage, invoice number and amount. An invoice number typed on the
+  stage form counts as raising it.
+
+Two columns say who without a log row: `tasks.completed_by` (a name, like
+`created_by`) and `quotation_stage_history.changed_by_user_id`. Triggers fill
+them from `app.actor_user_id` / `app.actor_name`, which `actAs()` sets for the
+route's own transaction (migration 091).
+
+A write with no signed-in user behind it (a job, an email reader, an import)
+records nobody, so it is never counted as a person's work.
+
 ## Transaction behaviour
 
 | act | atomic with its audit row? |

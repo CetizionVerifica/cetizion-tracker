@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import XLSX from 'xlsx';
-import { checkGstin, fyQuarter, gstDate, gstinCheckDigit, normaliseNumber, splitTax } from '../src/lib/accounting/gst.js';
+import { checkGstin, fyQuarter, gstDate, gstinCheckDigit, normaliseNumber, splitGstAmount, splitInclusive, splitTax } from '../src/lib/accounting/gst.js';
 import { parseBooksFile } from '../src/lib/accounting/books.js';
 import { tallyVoucherXml } from '../src/lib/accounting/providers.js';
 
@@ -28,6 +28,30 @@ test('intra-state supply splits CGST and SGST; inter-state is IGST', () => {
   assert.deepEqual(splitTax(100000, 18, { ourState: '27', theirState: '29' }), { cgst: 0, sgst: 0, igst: 18000, tax: 18000, intra: false });
   const odd = splitTax(333.33, 18, { ourState: 7, theirState: '07' });
   assert.equal(Math.round((odd.cgst + odd.sgst) * 100) / 100, odd.tax);
+});
+
+test('GST is taken out of an amount that already includes it, never added on top', () => {
+  // ₹1,18,000 at 18% is ₹1,00,000 + ₹18,000.
+  assert.deepEqual(splitInclusive(118000, [{ rate: 18, amount: 100000 }]), [{ rate: 18, total: 118000, taxable: 100000, gst: 18000 }]);
+  // Mixed rates split back into the lines they came from.
+  assert.deepEqual(splitInclusive(128500, [{ rate: 5, amount: 10000 }, { rate: 18, amount: 100000 }]).map((p) => [p.rate, p.taxable, p.gst]),
+    [[18, 100000, 18000], [5, 10000, 500]]);
+  // A share of an invoice (a 30% stage) still adds up to the paisa.
+  for (const total of [35550, 0.01, 99999.99, 38550]) {
+    const parts = splitInclusive(total, [{ rate: 18, amount: 100000 }, { rate: 5, amount: 10000 }, { rate: 12, amount: 333.33 }]);
+    const back = Math.round(parts.reduce((n, p) => n + p.taxable + p.gst, 0) * 100) / 100;
+    assert.equal(back, total, `${total} splits and adds back exactly`);
+  }
+  // No lines: the fallback rate. An export: rate 0, all of it taxable.
+  assert.deepEqual(splitInclusive(1180, [], 18), [{ rate: 18, total: 1180, taxable: 1000, gst: 180 }]);
+  assert.deepEqual(splitInclusive(5000, [], 0), [{ rate: 0, total: 5000, taxable: 5000, gst: 0 }]);
+});
+
+test('a GST amount splits into CGST + SGST or IGST and adds back', () => {
+  assert.deepEqual(splitGstAmount(18000, { ourState: '27', theirState: '27' }), { cgst: 9000, sgst: 9000, igst: 0, tax: 18000, intra: true });
+  const odd = splitGstAmount(0.03, { ourState: '27', theirState: '27' });
+  assert.equal(Math.round((odd.cgst + odd.sgst) * 100) / 100, 0.03);
+  assert.deepEqual(splitGstAmount(500, { ourState: '27', theirState: '29' }), { cgst: 0, sgst: 0, igst: 500, tax: 500, intra: false });
 });
 
 test('financial-year quarters start in April', () => {

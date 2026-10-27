@@ -234,11 +234,11 @@ function RateHistoryChart({ rows, currencies }) {
         <p className="small muted">No {currency} rates yet. Add one to see how it has moved.</p>
       ) : (
       <svg viewBox={`0 0 ${width} ${height}`} role="img" className="rate-chart__svg">
-        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke="var(--ink-200)" />
-        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke="var(--ink-200)" />
-        <path d={path} fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke="var(--border)" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke="var(--border)" />
+        <path d={path} fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         {points.map((point, index) => (
-          <circle key={point.id} cx={x(index)} cy={y(Number(point.rate))} r="3.5" fill="var(--white)" stroke="var(--brand-600)" strokeWidth="2">
+          <circle key={point.id} cx={x(index)} cy={y(Number(point.rate))} r="3.5" fill="var(--card)" stroke="var(--primary)" strokeWidth="2">
             <title>{`${point.from_currency}: ₹${point.rate} from ${point.effective_from}`}</title>
           </circle>
         ))}
@@ -311,6 +311,22 @@ const GROUPS = [
     ],
   },
   {
+    title: 'Service questionnaires',
+    hint: 'the form a client fills in before we quote',
+    items: [
+      { key: 'questionnaire_link_days', label: 'A questionnaire link stays open for', unit: 'days' },
+      { key: 'questionnaire_reminder_days', label: 'Remind a client who has not submitted after', unit: 'days' },
+    ],
+  },
+  {
+    title: 'Client portal',
+    hint: 'emails to clients who have the portal switched on',
+    items: [
+      { key: 'portal_notify_new_invoice', label: 'Email portal contacts when an invoice is recorded', type: 'bool' },
+      { key: 'portal_link_in_reminders', label: 'Add the portal address to payment reminders', type: 'bool' },
+    ],
+  },
+  {
     title: 'Follow-ups',
     hint: 'an email to the owner, then to management if nothing is logged; separate from the bell',
     items: [
@@ -328,6 +344,17 @@ const GROUPS = [
       // When Insights counts an open enquiry as at risk.
       { key: 'enquiry_reply_days', label: 'Enquiry at risk with no reply after', unit: 'working days' },
       { key: 'enquiry_decision_warn_days', label: 'Or with no quotation this close to its decision date', unit: 'working days' },
+    ],
+  },
+  {
+    title: 'Sales journey',
+    hint: 'when the Journey board on Pipeline calls a sale slow; stuck after twice this',
+    items: [
+      { key: 'journey_stuck_enquiry_days', label: 'An enquiry is slow after', unit: 'days' },
+      { key: 'journey_stuck_quotation_days', label: 'An open quotation is slow after', unit: 'days' },
+      { key: 'journey_unsent_days', label: 'Nudge a quotation still unsent after', unit: 'days' },
+      { key: 'journey_stuck_po_days', label: 'A PO with nothing invoiced is slow after', unit: 'days' },
+      { key: 'journey_paid_visible_days', quiet: true, label: 'A paid sale stays on the board for', unit: 'days' },
     ],
   },
   {
@@ -435,7 +462,7 @@ export function Assumptions() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
+  if (loading && !data) return <div className="skeleton h-[240px]" />;
 
   return (
     <SettingsPane

@@ -27,7 +27,7 @@ export default function ReportCategories() {
   const { data, loading, refetch } = useFetch(() => api.raw('/reports/categories'));
   const c = data?.data;
 
-  if (loading && !c) return <div className="skeleton" style={{ height: 320 }} />;
+  if (loading && !c) return <div className="skeleton h-[320px]" />;
   if (!c) return null;
 
   return (

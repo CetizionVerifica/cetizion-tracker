@@ -4,6 +4,7 @@ import { ListPage } from '../components/ListPage.jsx';
 import { Badge, DocumentLink } from '../components/ui.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerFills, ownerOptions } from '../lib/owners.js';
 import { money, date } from '../lib/format.js';
 
 /** The quotation form, shared with the quotation page. */
@@ -23,7 +24,7 @@ export function quotationFields(lookups) {
     { name: 'contact_email', label: 'Contact email', type: 'email', hint: 'Saved on the contact. Used to send the quotation and to chase payment' },
     { name: 'contact_phone', label: 'Contact phone' },
     { name: 'service_quoted', label: 'Service quoted', type: 'combo', options: lookups.services, span: 2, hint: 'The subject line; price it on the quotation page as lines' },
-    { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
+    { name: 'sales_person', label: 'Sales person', type: 'select', options: ownerOptions(lookups), fills: ownerFills(lookups), hint: OWNER_HINT },
     { name: 'sales_person_email', label: 'Sales person email', type: 'email' },
     { name: 'quotation_value', label: 'Quotation value', type: 'money', hint: 'Replaced by the line total once lines are added' },
     { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
@@ -46,7 +47,7 @@ export default function Quotations() {
   const [version, setVersion] = useState(0);
 
   const columns = [
-    { key: 'quotation_no', header: 'Quotation', className: 'mono', render: (r) => <>{r.quotation_no}{r.revision > 0 && <span className="small muted"> R{r.revision}</span>}<div className="small muted">{date(r.quotation_date)}{r.expired && <> · <span style={{ color: 'var(--danger-fg)' }}>expired</span></>}</div></> },
+    { key: 'quotation_no', header: 'Quotation', className: 'mono', render: (r) => <>{r.quotation_no}{r.revision > 0 && <span className="small muted"> R{r.revision}</span>}<div className="small muted">{date(r.quotation_date)}{r.expired && <> · <span style={{ color: 'var(--late)' }}>expired</span></>}</div></> },
     { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}{r.contact_person && <div className="small muted">{r.contact_person}</div>}</> },
     { key: 'sector', header: 'Sector' },
     { key: 'service_quoted', header: 'Service', className: 'wrap' },
@@ -60,7 +61,7 @@ export default function Quotations() {
         r.project_id ? (
           <Link className="mono" to={`/projects/${r.project_id}`}>{r.project_id}</Link>
         ) : r.status === 'Won - PO Received' ? (
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => setConverting(r)}>
+          <button type="button" className="btn btn--sm" onClick={() => setConverting(r)}>
             Register
           </button>
         ) : (
@@ -78,7 +79,7 @@ export default function Quotations() {
     <>
       <ListPage
         refreshToken={version}
-        title="Quotations"
+        title="Deals"
         subtitle="Every enquiry quoted, and what happened to it"
         resource="quotations"
         columns={columns}
@@ -95,7 +96,8 @@ export default function Quotations() {
           // was quoted (Reports' quoted-vs-won bars) and one owner's records.
           ['status', 'sector', 'sales_person', 'from', 'to', 'close_month', 'month', 'owner', 'from_email'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
         )}
-        dateFilterLabel="Quotation date"
+        dateFilterLabel="Quoted"
+        dateRange
         // A saved quotation can change the lists other forms offer (won
         // quotations for a PO, existing ones for an enquiry).
         onSaved={() => invalidateLookups()}

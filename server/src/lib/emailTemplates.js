@@ -38,8 +38,9 @@ function table(headers, rows) {
 /**
  * A payment reminder to one client for its overdue stages.
  * stages: [{ po_number, stage_name, invoice_no, invoice_date, invoice_due_date, currency, stage_amount, amount_received, days_overdue }]
+ * portalUrl: the client portal's address, when the recipient can sign in to it (#198 phase 3).
  */
-export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3 }) {
+export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3, portalUrl = null }) {
   const total = stages.reduce((n, s) => n + (Number(s.stage_amount) - Number(s.amount_received || 0)), 0);
   const currency = stages[0]?.currency || 'INR';
   const prefix = level >= finalLevel ? 'Final reminder' : level === 2 ? 'Second reminder' : 'Payment reminder';
@@ -54,7 +55,7 @@ ${lines.join('\n')}
 Total outstanding: ${inr(total, currency)}
 
 If payment has already been made, please share the transaction reference so we can update our records. For any query, reply to this email${financeEmail ? ` or write to ${financeEmail}` : ''}.
-
+${portalUrl ? `\n${PORTAL_NOTE.text(portalUrl)}\n` : ''}
 Thank you,
 Cetizion Verifica`;
   const html = layout(prefix, `
@@ -63,6 +64,45 @@ Cetizion Verifica`;
 ${table(['Invoice', 'PO / stage', 'Outstanding', 'Due date', 'Overdue'], stages.map((s) => [s.invoice_no, `${s.po_number} · ${s.stage_name}`, inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency), date(s.invoice_due_date), `${s.days_overdue} days`]))}
 <p><strong>Total outstanding: ${esc(inr(total, currency))}</strong></p>
 <p>If payment has already been made, please share the transaction reference so we can update our records.${financeEmail ? ` For any query, reply to this email or write to ${esc(financeEmail)}.` : ''}</p>
+${portalUrl ? PORTAL_NOTE.html(portalUrl) : ''}
+<p>Thank you,<br>Cetizion Verifica</p>`);
+  return { subject, text, html };
+}
+
+/** How to reach the client portal, as a reminder and a new-invoice email both say it. */
+const PORTAL_NOTE = {
+  text: (url) => `In the Cetizion Verifica client portal you can download your invoices, raise a query, or tell us you have paid: ${url}
+Enter this email address there and we will send you a link that signs you in.`,
+  html: (url) => `<p>In the <a href="${esc(url)}">Cetizion Verifica client portal</a> you can download your invoices, raise a query, or tell us you have paid. Enter this email address there and we will send you a link that signs you in.</p>`,
+};
+
+/**
+ * A new invoice is in the client portal (#198 phase 3, G6), to one portal
+ * contact. invoice: { invoice_no, invoice_date, invoice_due_date, po_number,
+ * stage_name, stage_amount, currency, taxable, gst, document_id }.
+ */
+export function portalNewInvoice({ contactName, company, invoice: s, url }) {
+  const subject = `Invoice ${s.invoice_no} for PO ${s.po_number} is in your client portal`;
+  const amount = Number(s.gst) > 0
+    ? `${inr(s.stage_amount, s.currency)} including GST ${inr(s.gst, s.currency)} (taxable ${inr(s.taxable, s.currency)})`
+    : inr(s.stage_amount, s.currency);
+  const what = `Invoice ${s.invoice_no} dated ${date(s.invoice_date)}, for ${s.stage_name} on PO ${s.po_number}, is now in the client portal${s.document_id ? ' with its PDF' : ''}.`;
+  const text = `Dear ${contactName || company},
+
+${what}
+
+Amount: ${amount}${s.invoice_due_date ? `\nDue: ${date(s.invoice_due_date)}` : ''}
+
+${PORTAL_NOTE.text(url)}
+
+Thank you,
+Cetizion Verifica`;
+  const html = layout(`Invoice ${s.invoice_no} is in your client portal`, `
+<p>Dear ${esc(contactName || company)},</p>
+<p>${esc(what)}</p>
+${table([], [['Amount', amount], ...(s.invoice_due_date ? [['Due', date(s.invoice_due_date)]] : [])])}
+${PORTAL_NOTE.html(url)}
+<p style="margin:16px 0"><a href="${esc(url)}" style="display:inline-block;padding:10px 16px;border-radius:8px;background:#0f766e;color:#fff;text-decoration:none">Open the client portal</a></p>
 <p>Thank you,<br>Cetizion Verifica</p>`);
   return { subject, text, html };
 }
@@ -333,6 +373,11 @@ const lakh = (v) => {
   return inr(n);
 };
 const FX_NOTE = 'Converted at the exchange rate on each record\'s date (ECB). Earlier reports used fixed rates of USD 88 and EUR 103.';
+/** The briefing's Team reports line (mis-report-sender-plan.md §B2): misPersonal.js teamReports() in words. */
+export function teamReportsLine(t) {
+  if (!t) return null;
+  return `Team reports: Sent: ${t.sent}${t.not_sent.length ? ` · Not sent: ${t.not_sent.map((n) => `${n.name} (${n.why})`).join(', ')}` : ''}`;
+}
 const link = (appUrl, path, text) => (appUrl ? `<a href="${esc(appUrl)}${esc(path)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
 
 /**
@@ -376,7 +421,7 @@ ${reminders.length ? reminders.map((r) => `- ${r.text}`).join('\n') : `- ${noRem
 
 3. ACTION ITEMS FOR TODAY (TOP 5)
 ${data.top_actions.length ? data.top_actions.map((x, i) => `${i + 1}. ${actionLine(x)}`).join('\n') : '- Nothing is pending.'}
-
+${data.team_reports ? `\n${teamReportsLine(data.team_reports)}\n` : ''}
 The full briefing, with every pending item, is attached as a PDF. ${FX_NOTE}
 
 Regards,
@@ -399,6 +444,7 @@ ${h3('3. Action items for today (top 5)')}
 ${data.top_actions.length
     ? `<ol>${data.top_actions.map((x) => `<li>${esc(actionLine(x))} · ${a(url(x.email_link || x.link), 'open')}</li>`).join('')}</ol>`
     : muted('Nothing is pending.')}
+${data.team_reports ? `<p>${esc(teamReportsLine(data.team_reports))}</p>` : ''}
 <p>The full briefing, with every pending item, is attached as a PDF.</p>
 <p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
 <p>Regards,<br>Cetizion Tracker</p>`);
@@ -441,5 +487,137 @@ ${table([], figures.map(([k, v]) => [k, String(v)]))}
 <p>The full report is attached as a PDF, with the enquiry table, sector-wise and service-wise sales, customer analysis, pending items and conversion figures.${appUrl ? ` ${link(appUrl, '/reports', 'Open the Reports page')}.` : ''}</p>
 <p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
 <p>Regards,<br>Cetizion Tracker</p>`);
+  return { subject, text, html };
+}
+
+// ---------------------------------------------------------------------
+// The personal daily MIS (mis-report-sender-plan.md §B1)
+// ---------------------------------------------------------------------
+
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** "Tue 6 Oct 2026", as the subject has it. */
+export function dayTitle(d) {
+  const [y, m, day] = String(d).slice(0, 10).split('-').map(Number);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${WEEKDAY_SHORT[new Date(Date.UTC(y, m - 1, day)).getUTCDay()]} ${day} ${months[m - 1]} ${y}`;
+}
+
+/** The headings of the seven sections; every line under them is the AI's (misAi.js writePersonal). */
+export const PERSONAL_SECTIONS = [
+  ['actions', 'Actions taken'],
+  ['mailbox', 'From the mailbox'],
+  ['not_in_tracker', 'In email, not in the tracker'],
+  ['waiting', 'Waiting on them'],
+  ['today', 'Today'],
+  ['for_management', 'For management'],
+];
+export const MAILBOX_PARTS = [['highlights', 'What mattered'], ['commitments', 'Commitments'], ['owed_replies', 'Replies owed'], ['awaiting', 'Awaiting a reply']];
+const COUNT_WORDS = [['emails_sent', 'Emails sent'], ['emails_received', 'Emails received'], ['calls', 'Calls and meetings'], ['records_created', 'Records created'], ['tasks_done', 'Tasks done'], ['overdue', 'Overdue']];
+
+/**
+ * The personal daily MIS email (§B1): the AI's report in short, the PDF
+ * attached. `data` is { person, period, report } with `report` as
+ * writePersonal checked it. Code adds the headings and the counts' labels,
+ * never a sentence of its own.
+ */
+export function personalMis({ data, appUrl = '' }) {
+  const r = data.report;
+  const day = dayTitle(data.period.from);
+  const subject = `Daily MIS · ${data.person.name} · ${day}`;
+  const url = (path) => (!path ? '' : /^https?:/i.test(path) ? path : appUrl ? `${appUrl}${path}` : '');
+  const a = (href, text) => (href ? `<a href="${esc(href)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
+  const h3 = (text) => `<h3 style="font-size:14px;margin:16px 0 4px">${esc(text)}</h3>`;
+  const none = '<p style="color:#64748b">—</p>';
+  const itemsOf = (key) => (key === 'for_management' ? r.for_management.map((text) => ({ text })) : key === 'actions' ? r.actions.map((x) => ({ ...x, text: `${x.at} ${x.text}` })) : r[key]);
+  const flag = (x) => (x.no_action_yesterday ? ' [no action yesterday]' : '');
+  const due = (x) => (x.due ? ` (by ${date(x.due)})` : '');
+
+  const textSections = PERSONAL_SECTIONS.map(([key, title], i) => {
+    if (key === 'mailbox') {
+      const parts = MAILBOX_PARTS.map(([k, t]) => `${t}:\n${r.mailbox[k].length ? r.mailbox[k].map((x) => `- ${x.text}${due(x)}`).join('\n') : '- —'}`).join('\n');
+      return `${i + 2}. ${title.toUpperCase()}\n${parts}`;
+    }
+    const items = itemsOf(key);
+    return `${i + 2}. ${title.toUpperCase()}\n${items.length ? items.map((x) => `- ${x.text}${flag(x)}`).join('\n') : '- —'}`;
+  }).join('\n\n');
+  const text = `${subject}
+
+1. SUMMARY OF THE DAY
+${r.summary.text}
+${COUNT_WORDS.map(([k, label]) => `${label}: ${r.summary.counts[k]}`).join(' · ')}
+
+${textSections}
+
+PDF attached.
+`;
+
+  const htmlSections = PERSONAL_SECTIONS.map(([key, title], i) => {
+    if (key === 'mailbox') {
+      return h3(`${i + 2}. ${title}`) + MAILBOX_PARTS.map(([k, t]) => `<p style="margin:8px 0 2px"><strong>${esc(t)}</strong></p>${r.mailbox[k].length ? `<ul>${r.mailbox[k].map((x) => `<li>${a(url(x.link), `${x.text}${due(x)}`)}</li>`).join('')}</ul>` : none}`).join('');
+    }
+    const items = itemsOf(key);
+    return h3(`${i + 2}. ${title}`) + (items.length
+      ? `<ul>${items.map((x) => `<li>${a(url(x.link), x.text)}${x.no_action_yesterday ? ' <strong style="color:#b42318">no action yesterday</strong>' : ''}</li>`).join('')}</ul>`
+      : none);
+  }).join('\n');
+  const html = layout(`Daily MIS · ${data.person.name}`, `
+<p style="color:#64748b;margin:0 0 8px">${esc(day)}</p>
+${h3('1. Summary of the day')}
+<p>${esc(r.summary.text)}</p>
+${table(COUNT_WORDS.map(([, label]) => label), [COUNT_WORDS.map(([k]) => String(r.summary.counts[k]))])}
+${htmlSections}
+<p style="font-size:12px;color:#64748b">PDF attached.</p>`);
+  return { subject, text, html };
+}
+
+// ------------------------------------------------------------ service questionnaires (#208)
+
+const button = (url, label) => `<p style="margin:16px 0"><a href="${esc(url)}" style="display:inline-block;padding:10px 16px;border-radius:8px;background:#0f766e;color:#fff;text-decoration:none">${esc(label)}</a></p>`;
+
+/**
+ * The client's questionnaire link, or a reminder of it. `message` is the
+ * salesperson's own note, printed as text.
+ */
+export function questionnaireInvite({ contactName, company, questionnaire, url, expiresAt, from, message = '', reminder = false }) {
+  const subject = reminder
+    ? `Reminder: ${questionnaire} for ${company}`
+    : `${questionnaire} for ${company}: a few questions before we quote`;
+  const opening = reminder
+    ? `A reminder about the ${questionnaire}: we need your answers before we can prepare your quotation.`
+    : `To prepare an accurate quotation, please answer a few questions about ${company} in our ${questionnaire}.`;
+  const how = `It takes a few minutes and works on a phone. Your answers are saved as you go, so you can stop and come back with the same link. The link works until ${date(expiresAt)}.`;
+  const text = `Dear ${contactName || company},
+
+${opening}
+${message ? `\n${message}\n` : ''}
+Open the questionnaire: ${url}
+
+${how}
+
+Thank you,
+${from || 'Cetizion Verifica'}`;
+  const html = layout(reminder ? 'A reminder about your questionnaire' : questionnaire, `
+<p>Dear ${esc(contactName || company)},</p>
+<p>${esc(opening)}</p>
+${message ? `<p style="white-space:pre-wrap;border-left:3px solid #e2e8f0;padding-left:12px;color:#334155">${esc(message)}</p>` : ''}
+${button(url, 'Open the questionnaire')}
+<p style="color:#475569">${esc(how)}</p>
+<p>Thank you,<br>${esc(from || 'Cetizion Verifica')}</p>`);
+  return { subject, text, html };
+}
+
+/** To the enquiry's owner: the client has submitted, the answers are on the enquiry. */
+export function questionnaireSubmitted({ ownerName, company, questionnaire, enquiryNo, submittedBy, link }) {
+  const subject = `${company} submitted the ${questionnaire}`;
+  const text = `Hello ${ownerName || ''},
+
+${submittedBy || 'The client'} submitted the ${questionnaire} for ${company} (enquiry ${enquiryNo || '—'}). The answers are on the enquiry${link ? `: ${link}` : ''}.
+
+Cetizion Tracker`;
+  const html = layout(subject, `
+<p>Hello ${esc(ownerName || '')},</p>
+<p>${esc(submittedBy || 'The client')} submitted the ${esc(questionnaire)} for ${esc(company)} (enquiry ${esc(enquiryNo || '—')}). The answers are on the enquiry.</p>
+${link ? button(link, 'See the answers') : ''}
+<p>Cetizion Tracker</p>`);
   return { subject, text, html };
 }

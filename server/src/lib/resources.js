@@ -119,6 +119,8 @@ async function saveQuotationContact(client, { after, input }) {
 
 export const resources = {
   companies: {
+    // Who created or changed one is recorded (recordActs.js, the daily MIS).
+    audit: 'company',
     // Shared master data: every quotation, enquiry and project that ever
     // named this client points at it, and the link trigger creates one on
     // its own the first time somebody types a new name. Anybody may add and
@@ -144,6 +146,7 @@ export const resources = {
   },
 
   contacts: {
+    audit: 'contact',
     // Shared master data, for the same reasons as companies above, and
     // created the same way — by the trigger, from a name on a record.
     adminOnlyDeletes: true,
@@ -173,6 +176,7 @@ export const resources = {
   },
 
   enquiries: {
+    audit: 'enquiry',
     table: 'enquiries',
     // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
     // the rows they own, and an unowned row is admin-only. Declared here so
@@ -237,6 +241,7 @@ export const resources = {
   },
 
   quotations: {
+    audit: 'quotation',
     table: 'quotations',
     // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
     // the rows they own, and an unowned row is admin-only. Declared here so
@@ -303,6 +308,7 @@ export const resources = {
   },
 
   projects: {
+    audit: 'project',
     table: 'projects',
     // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
     // the rows they own, and an unowned row is admin-only. Declared here so
@@ -318,6 +324,8 @@ export const resources = {
     defaultSort: 'project_id DESC',
     search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
     filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person', 'company_id'],
+    // The list's date picker (?from=&to=) filters on the planned start.
+    dateFilter: 'planned_start_date',
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
@@ -384,6 +392,7 @@ export const resources = {
   },
 
   'purchase-orders': {
+    audit: 'purchase_order',
     // Ownership is not this row's own — it belongs to the record above it
     // (#18 Phase 2C). A sales user reaches it only through a quotation or
     // project they own; an unreachable parent means unknown ownership, which
@@ -473,6 +482,7 @@ export const resources = {
   },
 
   'payment-stages': {
+    audit: 'payment_stage',
     // Ownership is not this row's own — it belongs to the record above it
     // (#18 Phase 2C). A sales user reaches it only through a quotation or
     // project they own; an unreachable parent means unknown ownership, which
@@ -493,6 +503,8 @@ export const resources = {
     defaultSort: 'po_number, stage_no',
     search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
     filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'invoice_no', 'document_id'],
+    // The list's date picker (?from=&to=) filters on the invoice date; a stage not yet invoiced has none.
+    dateFilter: 'invoice_date',
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
@@ -544,6 +556,20 @@ export const resources = {
   },
 
   'travel-logs': {
+    // Which client invoice carried a trip's cost is a billing decision, not a
+    // detail of the trip, and the people who make it are not the people who
+    // enter the trip: HR runs the travel desk and has full write access here
+    // (#196 §3), while the invoice belongs to the PO's sales side. The Trip
+    // screen has always hidden the selector from HR — but the field stayed on
+    // the generic resource, so the hiding was the only thing stopping an HR
+    // caller (or any other) from PATCHing it straight through the API (#214).
+    //
+    // It moves only through POST /api/travel-logs/:travelId/billed-stage now,
+    // which is closed to HR by the policy and writes an audit row naming the
+    // account. Listed here rather than filtered in the route handler because
+    // validate() is the one place every generic write passes — PATCH, POST and
+    // the MCP record import, which reaches crud.js without going near a route.
+    protectedFields: ['billed_stage_id'],
     table: 'travel_logs',
     view: 'v_travel_logs',
     label: 'Trip',
@@ -552,6 +578,7 @@ export const resources = {
     search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name', 'origin'],
     filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name',
       'trip_type_id', 'vendor_id', 'staff_id', 'cancelled', 'chargeable'],
+    dateFilter: 'travel_start_date',
     columns: [
       'travel_id', 'po_number', 'service_delivered', 'employee_name',
       'employee_email', 'purpose', 'destination', 'travel_start_date',
@@ -603,6 +630,7 @@ export const resources = {
     defaultSort: 'invoice_date DESC NULLS FIRST, id DESC',
     search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name'],
     filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id', 'vendor_id'],
+    dateFilter: 'invoice_date',
     // The invoice PDF (#196 §4.4).
     hasDocument: true,
     columns: [
@@ -655,6 +683,7 @@ export const resources = {
     defaultSort: 'submission_date DESC NULLS LAST, id DESC',
     search: ['claim_id', 'travel_id', 'employee_name', 'expense_category'],
     filters: ['travel_id', 'approval_status', 'status', 'employee_name', 'claim_month', 'project_id'],
+    dateFilter: 'submission_date',
     columns: [
       'claim_id', 'travel_id', 'expense_category', 'claim_month',
       'amount_claimed', 'submission_date', 'approval_status', 'approved_by',
@@ -719,6 +748,7 @@ export const resources = {
   },
 
   payments: {
+    audit: 'payment',
     // What has actually been received. payment_stages.amount_received is
     // computed from these rows by trigger, so a deleted or re-pointed
     // payment silently moves Due now, Collections and the forecast.
@@ -871,7 +901,8 @@ export const resources = {
     defaultSort: 'created_at DESC',
     search: ['label'],
     filters: ['entity', 'entity_id'],
-    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by', 'doc_type'],
+    // shared_with_client (#198): the tick that shows a staff file in the client's portal.
+    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by', 'doc_type', 'shared_with_client'],
     stampActor: 'uploaded_by',
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage', 'travel_log', 'travel_vendor_invoice']),
@@ -881,6 +912,7 @@ export const resources = {
       uploaded_by: str(120),
       // What the file is, so a trip's files can be checked by kind (#196 §4.6).
       doc_type: enumOf(TRAVEL_DOC_TYPES).nullable().optional(),
+      shared_with_client: bool(),
     }),
   },
 
@@ -1151,6 +1183,7 @@ export const resources = {
     defaultSort: 'credit_note_date DESC NULLS LAST, id DESC',
     search: ['credit_note_no', 'remarks'],
     filters: ['vendor_id', 'against_invoice_id', 'kind', 'segment_id'],
+    dateFilter: 'credit_note_date',
     columns: ['vendor_id', 'credit_note_no', 'credit_note_date', 'against_invoice_id', 'segment_id', 'kind',
       'refund_amount', 'cancellation_charges', 'remarks', 'document_id'],
     schema: z.object({

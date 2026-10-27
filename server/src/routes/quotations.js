@@ -5,6 +5,7 @@
  *   GET  /api/quotations/:key/pdf       the quotation as a PDF
  *   POST /api/quotations/:key/revise    { note } snapshot the current version, bump the revision, reopen validity
  *   POST /api/quotations/:key/send      { to?, message? } stamp sent_at; email the PDF to the contact when asked
+ *                                       (refused while a line needs a price, #208)
  *   POST /api/quotations/:key/accept    { accepted_by_name } the client said yes
  *
  * :key is the quotation number or the internal id. Mounted before the
@@ -13,11 +14,13 @@
 import { Router } from 'express';
 import { readFromEmail } from '../lib/mailbox/autoQuotation.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { actAs, logStageMoves, logUpdated } from '../lib/recordActs.js';
 import { z } from 'zod';
 import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { businessToday } from '../lib/businessDate.ts';
+import { reviseQuotation } from '../lib/quotationRevisions.js';
+import { assertPricedForClient, priceNeededReasons } from '../lib/serviceQuotes/priceNeeded.js';
 import { sendMail } from '../lib/mail.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
 import { documentStorageReady, uploadDocument } from '../lib/documents.js';
@@ -54,7 +57,8 @@ async function loadQuotation(key, client = { query }, scope = UNRESTRICTED) {
 export async function fullQuotation(key, scope = UNRESTRICTED) {
   const q = await loadQuotation(key, { query }, scope);
   const [lines, revisions, company, contact, enquiry, project, pos, settings] = await Promise.all([
-    query('SELECT ql.*, s.name AS service_name, s.sac_code FROM quotation_lines ql LEFT JOIN services s ON s.id = ql.service_id WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]),
+    // A line's own SAC code (a pricing rule's, #208) before its service's: every other line has none, and reads as before.
+    query('SELECT ql.*, s.name AS service_name, COALESCE(ql.sac_code, s.sac_code) AS sac_code FROM quotation_lines ql LEFT JOIN services s ON s.id = ql.service_id WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]),
     query('SELECT id, revision, note, created_by, created_at, snapshot FROM quotation_revisions WHERE quotation_id = $1 ORDER BY revision DESC', [q.id]),
     q.company_id ? query('SELECT * FROM companies WHERE id = $1', [q.company_id]) : { rows: [] },
     q.contact_id ? query('SELECT * FROM contacts WHERE id = $1', [q.contact_id]) : { rows: [] },
@@ -65,6 +69,21 @@ export async function fullQuotation(key, scope = UNRESTRICTED) {
   ]);
   const set = Object.fromEntries(settings.rows.map((r) => [r.key, r.value]));
   const theirs = company.rows[0] || null;
+  // Why each line a pricing rule could not price needs one (#208 phase 2): worked out on read, for
+  // staff. The client's views (acceptance clientView, the PDF) list their own line fields and leave it out.
+  if (Number(q.price_needed_count) > 0) {
+    const reasons = await priceNeededReasons({ query }, q, lines.rows);
+    for (const l of lines.rows) if (l.price_needed) l.price_needed_reason = reasons.get(l.id);
+  }
+  // Which questionnaire responses its generated lines came from (D12: one quotation, each service's lines),
+  // from the lines themselves. q.questionnaire_response_id is only the one it was last generated from.
+  const generatedFrom = new Map();
+  for (const l of lines.rows) {
+    if (!l.generated || !l.questionnaire_response_id) continue;
+    const g = generatedFrom.get(l.questionnaire_response_id) || { questionnaire_response_id: l.questionnaire_response_id, service_name: l.service_name, lines: 0 };
+    g.lines += 1;
+    generatedFrom.set(l.questionnaire_response_id, g);
+  }
   // Where the supply is made decides CGST + SGST against IGST. The client's
   // own GSTIN is the most reliable answer; the place of supply typed on the
   // quotation is the fallback, and it carries its state code at the front
@@ -76,7 +95,7 @@ export async function fullQuotation(key, scope = UNRESTRICTED) {
     || null;
   return {
     read_from_email: await readFromEmail(q.quotation_no),
-    ...q, lines: lines.rows, revisions: revisions.rows, company: theirs, contact: contact.rows[0] || null,
+    ...q, lines: lines.rows, generated_from: [...generatedFrom.values()], revisions: revisions.rows, company: theirs, contact: contact.rows[0] || null,
     enquiry: enquiry.rows[0] || null, project: project.rows[0] || null, purchase_orders: pos.rows,
     gst: gstBreakdown(lines.rows, { ourState, theirState, currency: q.currency }),
     settings: set,
@@ -101,6 +120,7 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
   const body = reviseSchema.parse(req.body || {});
   const scope = scopeOf(req);
   const data = await transaction(async (client) => {
+    await actAs(client, req.user);
     // Lock first, then read: two clicks must not both snapshot the same revision.
     // Both reads are scoped, so the id every statement below works from came
     // from a row this caller may reach (#18 Phase 2C).
@@ -108,24 +128,12 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
     await client.query('SELECT 1 FROM quotations WHERE id = $1 FOR UPDATE', [id]);
     const q = await loadQuotation(String(id), client, scope);
     if (q.status === 'Won - PO Received') throw new ApiError(422, 'A won quotation is not revised; raise a new quotation for extra scope');
-    const { rows: lines } = await client.query('SELECT * FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]);
-    const snapshot = { quotation_no: q.quotation_no, revision: q.revision, quotation_date: q.quotation_date, valid_until: q.valid_until, quotation_value: q.quotation_value, subtotal: q.subtotal, tax_total: q.tax_total, total: q.total, currency: q.currency, terms: q.terms, sent_at: q.sent_at, lines };
-    await client.query('INSERT INTO quotation_revisions (quotation_id, revision, snapshot, note, created_by) VALUES ($1,$2,$3,$4,$5)', [q.id, q.revision, JSON.stringify(snapshot), body.note || null, req.user?.username || null]);
-    const { rows: [{ value: days }] } = await client.query(`SELECT value FROM settings WHERE key = 'quotation_validity_days'`).then((r) => ({ rows: r.rows.length ? r.rows : [{ value: '30' }] }));
-    const today = businessToday();
-    const { rows: [updated] } = await client.query(
-      `UPDATE quotations SET revision = revision + 1, quotation_date = $2, valid_until = ($2::date + ($3::int || ' days')::interval)::date,
-              sent_at = NULL, accepted_at = NULL, accepted_by_name = NULL,
-              status = CASE WHEN status = 'Lost' THEN 'Draft' ELSE status END,
-              -- a new version is a new approval round
-              approval_status = 'not_needed', approval_reason = NULL, approval_requested_at = NULL,
-              approval_requested_by = NULL, approval_decided_at = NULL, approved_by = NULL,
-              approval_note = NULL, approved_discount_percent = NULL
-        WHERE id = $1 RETURNING revision, valid_until, quotation_date`,
-      [q.id, today, Number(days) || 30]
-    );
-    // The discount check runs again on the new version.
-    await client.query('SELECT quotation_totals($1)', [q.id]);
+    const updated = await reviseQuotation(client, q, { note: body.note, by: req.user?.username });
+    await logUpdated(client, req.user, {
+      entity: 'quotation', ref: q.quotation_no, changes: {},
+      extra: { event: 'revised', client_name: q.client_name, revision: updated.revision, note: body.note || null },
+    });
+    await logStageMoves(client, req.user, [q.id]);
     return updated;
   });
   res.json({ data });
@@ -155,6 +163,7 @@ quotationDocRouter.post('/:key/send', async (req, res) => {
   const q = await fullQuotation(req.params.key, scopeOf(req));
   if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
   if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
+  assertPricedForClient(q);
   let email = null;
   const to = body.email ? body.to || q.contact?.email : null;
   if (body.email && !to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });
@@ -173,7 +182,13 @@ quotationDocRouter.post('/:key/send', async (req, res) => {
     ? await uploadDocument({ buffer: pdf, fileName, contentType: 'application/pdf', owner: 'attachments' }).catch(() => null)
     : null;
   const updated = await transaction(async (db) => {
+    await actAs(db, req.user);
     const { rows: [u] } = await db.query(`UPDATE quotations SET sent_at = COALESCE(sent_at, now()) WHERE id = $1 RETURNING sent_at`, [q.id]);
+    await logUpdated(db, req.user, {
+      entity: 'quotation', ref: q.quotation_no, changes: {},
+      extra: { event: 'sent', client_name: q.client_name, revision: q.revision, emailed_to: to || null },
+    });
+    await logStageMoves(db, req.user, [q.id]);
     if (doc) {
       // Kept on the quotation, on its timeline as a file; the client copy slot stays theirs.
       await db.query(`INSERT INTO attachments (entity, entity_id, document_id, label, uploaded_by) VALUES ('quotation', $1, $2, $3, $4)`,
@@ -190,11 +205,20 @@ quotationDocRouter.post('/:key/accept', async (req, res) => {
   const parsed = acceptSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: { accepted_by_name: parsed.error.issues[0].message } });
   const q = await loadQuotation(req.params.key, { query }, scopeOf(req));
-  const { rows: [updated] } = await query(
-    `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
-            status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
-      WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
-    [q.id, parsed.data.accepted_by_name]
-  );
+  const updated = await transaction(async (client) => {
+    await actAs(client, req.user);
+    const { rows: [u] } = await client.query(
+      `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
+              status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
+        WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
+      [q.id, parsed.data.accepted_by_name]
+    );
+    await logUpdated(client, req.user, {
+      entity: 'quotation', ref: q.quotation_no, changes: {},
+      extra: { event: 'accepted', client_name: q.client_name, accepted_by_name: u.accepted_by_name },
+    });
+    await logStageMoves(client, req.user, [q.id]);
+    return u;
+  });
   res.json({ data: updated });
 });

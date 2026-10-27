@@ -96,7 +96,7 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
     const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]));
 
     assert.deepEqual(Object.keys(byName).sort(), [
-      'active', 'created_at', 'email', 'id', 'last_login_at',
+      'active', 'created_at', 'daily_mis', 'daily_mis_notice_seen_at', 'email', 'id', 'last_login_at',
       'name', 'notify', 'password_hash', 'phone', 'role', 'session_version',
       'signature', 'time_zone', 'updated_at',
     ]);

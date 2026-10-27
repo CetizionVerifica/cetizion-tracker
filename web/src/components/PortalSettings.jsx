@@ -16,7 +16,7 @@ export function PortalSettings({ companyId }) {
     try { const r = await fn(); if (ok) toast(typeof ok === 'function' ? ok(r) : ok, 'success'); refetch(); } catch (err) { toast(err.message, 'danger'); }
   }
   const patch = (body, ok) => run(() => api.raw(`/portal-admin/companies/${companyId}`, { method: 'PATCH', body }), ok);
-  if (!p) return <Card title="Client portal"><div className="skeleton" style={{ height: 80 }} /></Card>;
+  if (!p) return <Card title="Client portal"><div className="skeleton h-[80px]" /></Card>;
   return (
     <>
       <Card title="Client portal" hint="Contacts of this client sign in with a link sent to their email and see only this company."
@@ -33,7 +33,7 @@ export function PortalSettings({ companyId }) {
       <Card flush title="Who can sign in">
         <DataTable rows={p.contacts} columns={[
           { key: 'name', header: 'Contact', className: 'strong' },
-          { key: 'email', header: 'Email', render: (r) => r.email || <span className="muted">no email, cannot sign in</span> },
+          { key: 'email', header: 'Email', render: (r) => r.email || <AddEmail contact={r} onSave={(email) => run(() => api.update('contacts', r.id, { email }), `Email saved for ${r.name}`)} /> },
           { key: 'last_login', header: 'Last sign-in', render: (r) => (r.last_login ? new Date(r.last_login).toLocaleString() : 'never') },
           { key: 'portal_access', header: 'Access', render: (r) => <Badge tone={r.portal_access ? 'success' : 'danger'}>{r.portal_access ? 'allowed' : 'withdrawn'}</Badge> },
           {
@@ -47,7 +47,7 @@ export function PortalSettings({ companyId }) {
         ]} />
       </Card>
       <Card flush title="Portal activity" hint="Every sign-in, view, download and message.">
-        <DataTable rows={p.audit} empty={<div className="small muted" style={{ padding: '12px 18px' }}>Nothing yet.</div>} columns={[
+        <DataTable rows={p.audit} empty={<div className="small muted px-[18px] py-3">Nothing yet.</div>} columns={[
           { key: 'created_at', header: 'When', className: 'small', render: (r) => new Date(r.created_at).toLocaleString() },
           { key: 'name', header: 'Who' },
           { key: 'action', header: 'What', render: (r) => <Badge>{r.action.replace('_', ' ')}</Badge> },
@@ -56,5 +56,19 @@ export function PortalSettings({ companyId }) {
         ]} />
       </Card>
     </>
+  );
+}
+
+/**
+ * A contact with no email cannot sign in, and most have none
+ * (docs/client-data-gaps.md). Their email is typed here, where it is
+ * missed, rather than on another page (#198 phase 3).
+ */
+function AddEmail({ contact, onSave }) {
+  return (
+    <form className="flex items-center gap-1.5" title="No email: cannot sign in until one is added" onSubmit={(e) => { e.preventDefault(); onSave(String(new FormData(e.currentTarget).get('email')).trim()); }}>
+      <input className="input" style={{ width: '100%', minWidth: 110, maxWidth: 170 }} type="email" name="email" required maxLength={160} placeholder="Add an email" aria-label={`Email for ${contact.name}`} />
+      <button type="submit" className="btn btn--sm">Save</button>
+    </form>
   );
 }

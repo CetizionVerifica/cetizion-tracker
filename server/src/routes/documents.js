@@ -5,6 +5,7 @@ import {
   purgeOrphanedDocuments, uploadDocument,
 } from '../lib/documents.js';
 import { scopeOf } from '../auth/ownership.js';
+import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
 export const documentRouter = Router();
@@ -90,7 +91,12 @@ documentRouter.get('/:id', async (req, res) => {
   await assertDocumentReadable(scopeOf(req), Number(req.params.id));
 
   const { document, body } = await fetchDocument(Number(req.params.id));
-  const inline = isInlineType(document.content_type);
+  // A file a client sent through the portal (#198) is always a download:
+  // its type is only what the client's browser said it was.
+  const { rowCount: fromClient } = await query(
+    `SELECT 1 FROM attachments WHERE document_id = $1 AND uploaded_by_contact_id IS NOT NULL
+     UNION ALL SELECT 1 FROM portal_client_actions WHERE document_id = $1`, [document.id]);
+  const inline = isInlineType(document.content_type) && !fromClient;
   const asciiName = document.file_name.replace(/[^\x20-\x7e]|["\\]/g, '_');
 
   res.setHeader('Content-Type', inline ? document.content_type : 'application/octet-stream');

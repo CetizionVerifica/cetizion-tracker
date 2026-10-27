@@ -42,17 +42,17 @@ const TONE = {
 
 export function Card({ title, hint, actions, children, flush = false, className = '' }) {
   return (
-    <UiCard className={cn('gap-0 rounded-[10px] border-border bg-card py-0 shadow-none', className)}>
+    <UiCard className={cn('gap-0 rounded-lg border-border bg-card py-0 shadow-none', className)}>
       {/* The actions sit beside the title when there is room and under it
           when there is not. Held `shrink-0` beside it, a card header
           carrying two filters pushed a phone page past its viewport. */}
       {(title || actions) && (
-        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 [.border-b]:pb-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
           {/* The title keeps a readable width; actions too wide to sit
               beside it wrap onto their own line rather than squeezing it
               to a word per line. */}
           <div className="min-w-0 sm:flex-[1_1_260px]">
-            {title && <div className="text-[15px] font-semibold text-foreground">{title}</div>}
+            {title && <h2 className="font-display text-base font-bold text-foreground">{title}</h2>}
             {hint && <div className="measure mt-1 text-[12.5px] text-muted-foreground">{hint}</div>}
           </div>
           {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
@@ -66,20 +66,23 @@ export function Card({ title, hint, actions, children, flush = false, className 
 /* ------------------------------------------------------------------ stat */
 
 export function Stat({ label, value, meta, tone = '', to, onClick }) {
+  // `warn` and `ok` are older names some pages still pass. `ok` stays plain:
+  // a zero is not news, and colouring it green says it is.
   const accent = {
     danger: 'text-late',
     warning: 'text-waiting',
+    warn: 'text-waiting',
     success: 'text-settled',
     info: 'text-info',
   }[tone];
   const className = cn(
-    'flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
+    'flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
     (to || onClick) && 'hover:border-primary/40 hover:bg-accent'
   );
   const inner = (
     <>
-      <div className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{label}</div>
-      <div className={cn('num text-2xl font-semibold', accent || 'text-foreground')}>{value}</div>
+      <div className="eyebrow">{label}</div>
+      <div className={cn('num font-display text-2xl font-bold', accent || 'text-foreground')}>{value}</div>
       {meta && <div className="text-[12px] text-muted-foreground">{meta}</div>}
     </>
   );
@@ -100,7 +103,7 @@ export function Badge({ children, tone, dot = false, className }) {
   // says anything here, which is the design's rule and also the accessible
   // one.
   return (
-    <UiBadge variant="outline" className={cn('gap-1.5 rounded-[6px] font-medium', TONE[resolved] || TONE.neutral, className)}>
+    <UiBadge variant="outline" className={cn('gap-1.5 rounded-full font-semibold', TONE[resolved] || TONE.neutral, className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
     </UiBadge>
@@ -149,7 +152,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
           <UiCard
             key={row.id ?? i}
             className={cn(
-              'gap-0 rounded-[10px] border-border bg-card py-0 shadow-none',
+              'gap-0 rounded-lg border-border bg-card py-0 shadow-none',
               onRowClick && 'cursor-pointer',
               rowClassName ? rowClassName(row) || '' : ''
             )}
@@ -161,7 +164,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
             <CardContent className="px-3 py-3">
             {labelled.map((col, index) => (
               <div key={col.key} className={cn('flex gap-3 py-1', index > 0 && 'border-t border-border/60 pt-2')}>
-                <span className="w-[38%] shrink-0 text-[11px] font-semibold tracking-[0.04em] text-muted-foreground uppercase">
+                <span className="eyebrow w-[38%] shrink-0">
                   {col.header}
                 </span>
                 <span className={cn('min-w-0 flex-1 wrap-anywhere text-[13px]', col.align === 'right' && 'num')}>
@@ -307,7 +310,7 @@ function TableSkeleton() {
   return (
     <div className="flex flex-col gap-2.5 p-4">
       {Array.from({ length: 6 }).map((_, i) => (
-        <Skeleton key={i} className="h-4 rounded-[6px]" style={{ width: `${100 - (i % 3) * 12}%` }} />
+        <Skeleton key={i} className="h-4 rounded-sm" style={{ width: `${100 - (i % 3) * 12}%` }} />
       ))}
     </div>
   );
@@ -320,7 +323,7 @@ export function Empty({ icon, title, text, action }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
       {icon && <div className="text-muted-foreground" aria-hidden="true">{icon}</div>}
-      <div className="text-[15px] font-semibold text-foreground">{title}</div>
+      <div className="font-display text-base font-bold text-foreground">{title}</div>
       {text && <p className="measure m-0 text-[13px] text-muted-foreground">{text}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
@@ -335,12 +338,12 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         className={cn(
-          'max-h-[86vh] gap-0 overflow-hidden rounded-[14px] border-border bg-popover p-0',
+          'max-h-[86vh] gap-0 overflow-hidden rounded-xl border-border bg-popover p-0',
           size === 'lg' ? 'sm:max-w-3xl' : size === 'sm' ? 'sm:max-w-md' : 'sm:max-w-xl'
         )}
       >
         <DialogHeader className="border-b border-border px-5 py-4 text-left">
-          <DialogTitle className="text-[15px] font-semibold">{title}</DialogTitle>
+          <DialogTitle className="font-display text-base font-bold">{title}</DialogTitle>
           {subtitle && <DialogDescription className="measure text-[12.5px]">{subtitle}</DialogDescription>}
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto px-5 py-4">{children}</div>
@@ -377,7 +380,7 @@ export function Input({ error, className, ...props }) {
   return (
     <UiInput
       aria-invalid={error ? true : undefined}
-      className={cn('h-control rounded-[6px] bg-secondary text-[13px]', className)}
+      className={cn('h-control rounded-md bg-secondary text-[13px]', className)}
       {...props}
     />
   );
@@ -389,7 +392,7 @@ export function Textarea({ error, className, ...props }) {
     <textarea
       aria-invalid={error ? true : undefined}
       className={cn(
-        'min-h-20 w-full rounded-[6px] border border-input bg-secondary px-3 py-2 text-[13px] text-foreground',
+        'min-h-20 w-full rounded-md border border-input bg-secondary px-3 py-2 text-[13px] text-foreground',
         'placeholder:text-muted-foreground aria-invalid:border-late',
         className
       )}
@@ -404,7 +407,7 @@ export function Select({ error, options = [], placeholder = '—', children, cla
     <select
       aria-invalid={error ? true : undefined}
       className={cn(
-        'h-control w-full rounded-[6px] border border-input bg-secondary px-2.5 text-[13px] text-foreground',
+        'h-control w-full rounded-md border border-input bg-secondary px-2.5 text-[13px] text-foreground',
         'aria-invalid:border-late',
         className
       )}
@@ -445,13 +448,13 @@ export function Progress({ value }) {
   return (
     <div className="flex items-center gap-2">
       <div
-        className="h-1.5 flex-1 overflow-hidden rounded-[6px] bg-secondary"
+        className="h-1.5 flex-1 overflow-hidden rounded-sm bg-secondary"
         role="progressbar"
         aria-valuenow={Math.round(pct * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
       >
-        <div className="h-full rounded-[6px] bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
+        <div className="h-full rounded-md bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
       </div>
       <span className="num min-w-8 text-right text-[12px] text-muted-foreground">{Math.round(pct * 100)}%</span>
     </div>
@@ -472,9 +475,9 @@ export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
             </span>
             <span className="num shrink-0 text-[12.5px] text-secondary-foreground">{valueFormat(item.value, item)}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-[6px] bg-secondary">
+          <div className="h-1.5 overflow-hidden rounded-sm bg-secondary">
             <div
-              className="h-full rounded-[6px] bg-primary/80"
+              className="h-full rounded-md bg-primary/80"
               style={{ width: `${((Number(item.value) || 0) / max) * 100}%` }}
             />
           </div>
@@ -490,7 +493,7 @@ export function KeyValues({ items }) {
     <dl className="auto-grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
       {items.filter(Boolean).map((item) => (
         <div key={item.label} className="min-w-0">
-          <dt className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{item.label}</dt>
+          <dt className="eyebrow">{item.label}</dt>
           <dd className="mt-0.5 ml-0 text-[13px] text-foreground">{item.value ?? <span className="text-muted-foreground">—</span>}</dd>
         </div>
       ))}
@@ -518,10 +521,10 @@ export function Tabs({ tabs, active, onChange }) {
         >
           {tab.label}
           {tab.count !== undefined && (
-            <span className="num rounded-[6px] bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
+            <span className="num rounded-sm bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
           )}
           {tab.warning ? (
-            <span className="num rounded-[6px] bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
+            <span className="num rounded-sm bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
           ) : null}
         </button>
       ))}
@@ -540,7 +543,7 @@ export function Alert({ tone = 'info', children }) {
     success: 'border-settled/30 bg-settled/10 text-settled',
   }[tone] || 'border-info/30 bg-info/10 text-info';
   return (
-    <div className={cn('alert flex items-start gap-2 rounded-[10px] border px-3 py-2.5 text-[13px]', look)} role="status">
+    <div className={cn('alert flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px]', look)} role="status">
       {children}
     </div>
   );

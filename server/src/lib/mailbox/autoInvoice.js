@@ -360,7 +360,7 @@ async function recordUnderLock(db, account, cand, ctx, { inv, decision, po, docu
   await saveDecision(db, account, cand, {
     ...decision, outcome: 'recorded', stage_id: recorded.id, po_number: po.po_number, document_kept_existing: recorded.document_kept_existing,
   });
-  ctx.recorded.push({ account, invoice_no: recorded.invoice_no, po_number: po.po_number, stage_name: pick.stage.stage_name, mode: decision.mode });
+  ctx.recorded.push({ account, stage_id: recorded.id, invoice_no: recorded.invoice_no, po_number: po.po_number, stage_name: pick.stage.stage_name, mode: decision.mode });
   return 'recorded';
 }
 
@@ -478,6 +478,8 @@ async function notifyOutcomes(ctx) {
       entity: 'purchase_order', entityId: r.po_number, link: `/purchase-orders/${encodeURIComponent(r.po_number)}`,
       dedupeKey: `invoice-recorded:${r.po_number}:${r.invoice_no}`,
     }).catch(() => {});
+    // No portal email (#198 phase 3): we emailed this invoice to the client
+    // ourselves, so they already have it (lib/portalNotices.js).
   }
   const WHY = {
     po_not_found: 'its PO is not in the tracker', several_pos: 'more than one PO could be it', amount_not_a_stage: 'its amount is not one of the PO\'s stages',

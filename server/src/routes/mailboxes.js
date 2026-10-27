@@ -7,7 +7,7 @@
  *   GET    /api/mailboxes/oauth/microsoft        the sign-in comes back here
  *   POST   /api/mailboxes/test                   { email, shared } a test mailbox (not in production)
  *   POST   /api/mailboxes/:id/test-messages      { messages } feed a test mailbox
- *   PATCH  /api/mailboxes/:id                    { visibility, import_days, exclude_internal, auto_create_contacts, read_scope; is_shared (admin) }
+ *   PATCH  /api/mailboxes/:id                    { visibility, import_days, exclude_internal, auto_create_contacts, read_scope; is_shared (admin); may_send_reports (owner) }
  *   PATCH  /api/mailboxes/:id/owner              { user_id } (admin) who a personal mailbox belongs to
  *   POST   /api/mailboxes/:id/sync
  *   POST   /api/mailboxes/:id/disconnect         { remove_bodies }
@@ -29,10 +29,12 @@ import { pool, query } from '../db.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
-import { applyVisibility, canReadLive, mayReadContent, sealTokens } from '../lib/mailbox/rules.js';
+import { publicAttachment } from '../lib/mailbox/attachmentView.js';
+import { liveAttachmentList, withLiveNames } from '../lib/mailbox/liveAttachments.js';
+import { applyVisibility, canReadLive, mayViewAttachments, sealTokens } from '../lib/mailbox/rules.js';
 import { isStaging } from '../lib/ops/environment.js';
 import { authUrl, exchangeCode, microsoftConfigured } from '../lib/mailbox/microsoft.js';
-import { disconnect, ensureSubscriptions, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
+import { disconnect, ensureSubscriptions, listAttachmentsNow, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
 
 export const mailboxRouter = Router();
 export const mailThreadRouter = Router();
@@ -95,7 +97,7 @@ mailboxRouter.get('/', async (req, res) => {
   const mine = readable(req, params);
   const { rows } = await query(
     `SELECT a.id, a.username, a.provider, a.email, a.display_name, a.is_shared, a.status, a.visibility, a.import_days, a.exclude_internal,
-            a.auto_create_contacts, a.read_scope, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
+            a.auto_create_contacts, a.read_scope, a.may_send_reports, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
             -- Who it belongs to (074): a personal mailbox's owner, as a users row; null for shared, or unassigned.
             a.user_id, (SELECT json_build_object('id', u.id, 'name', u.name, 'active', u.active) FROM users u WHERE u.id = a.user_id) AS owner,
             a.connected_by, (SELECT u.name FROM users u WHERE u.id = a.connected_by) AS connected_by_name,
@@ -199,12 +201,20 @@ const settingsSchema = z.object({
   // Which folders the readers read (074): every folder, or Inbox and Sent Items.
   read_scope: z.enum(['all', 'inbox_sent']).optional(),
   is_shared: z.boolean().optional(),
+  // The owner allows the scheduled reports to be sent from their personal mailbox (090).
+  may_send_reports: z.boolean().optional(),
 });
 
 mailboxRouter.patch('/:id', async (req, res) => {
-  await administrable(req, req.params.id);
+  const account = await administrable(req, req.params.id);
   const parsed = settingsSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
+  // Sending reports from somebody's own mailbox puts mail in their name in
+  // their Sent Items: their decision, not an admin's (mis-report-sender-plan.md §A3).
+  if (parsed.data.may_send_reports !== undefined) {
+    if (account.is_shared) throw new ApiError(422, 'A shared mailbox can always send the reports; the switch is for personal mailboxes');
+    if (account.user_id === null || account.user_id !== (req.user?.id ?? null)) throw new ApiError(403, 'Only the owner of this mailbox can allow reports to be sent from it');
+  }
   // Making a mailbox the team's, or taking it back, is an admin's decision.
   if (parsed.data.is_shared !== undefined && !isAdmin(req)) throw new ApiError(403, 'Only an admin can make a mailbox shared');
   const set = Object.entries(parsed.data).filter(([, v]) => v !== undefined);
@@ -218,7 +228,7 @@ mailboxRouter.patch('/:id', async (req, res) => {
     const { rows: [inbox] } = await query('SELECT name FROM inboxes WHERE account_id = $1', [Number(req.params.id)]);
     if (inbox) throw new ApiError(409, `This mailbox feeds the Inbox "${inbox.name}". Remove that Inbox first, then make the mailbox personal.`);
   }
-  const { rows: [a] } = await query(`UPDATE connected_accounts SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING id, visibility, import_days, exclude_internal, auto_create_contacts, read_scope, is_shared, user_id`, [Number(req.params.id), ...set.map(([, v]) => v)]);
+  const { rows: [a] } = await query(`UPDATE connected_accounts SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING id, visibility, import_days, exclude_internal, auto_create_contacts, read_scope, is_shared, user_id, may_send_reports`, [Number(req.params.id), ...set.map(([, v]) => v)]);
   if (!a) throw new ApiError(404, 'Mailbox not found');
   // A stricter level applies to what is already stored, too.
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_messages SET subject = NULL, snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
@@ -579,29 +589,45 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // Outlook's state of each message and what is attached to it (076), for
   // the reading pane (docs/inbox-outlook-plan.md §3.3). Bcc only on mail we
   // sent; a message deleted in Outlook keeps its place with no body.
-  const { rows } = await query(
+  const messagesOf = async () => (await query(
     `SELECT m.id, m.direction, m.from_email, m.from_name, m.to_emails, m.cc_emails,
             CASE WHEN m.direction = 'outbound' THEN COALESCE(m.bcc_emails, '{}') ELSE '{}' END AS bcc_emails,
             m.subject, CASE WHEN m.removed_at IS NULL THEN m.snippet END AS snippet, CASE WHEN m.removed_at IS NULL THEN m.body_html END AS body_html,
             m.has_attachments, m.sent_at, m.sent_from_tracker_by, m.is_read, m.flag_status, m.importance, m.web_link, m.folder_id, m.removed_at,
-            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id) ORDER BY x.is_inline, x.id)
+            m.provider_id, m.attachments_listed_at,
+            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'provider_id', x.provider_id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id, 'kind', x.kind) ORDER BY x.is_inline, x.id)
                         FROM email_attachments x WHERE x.message_id = m.id), '[]'::json) AS attachments
-       FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id]);
+       FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id])).rows;
+  let rows = await messagesOf();
+  // Files the sync has not listed yet are listed now, so they show on opening.
+  if (await listAttachmentsNow(t.account_id, rows)) rows = await messagesOf();
   // The owner of a personal mailbox that stores less than the whole message
-  // reads the rest live (GET /api/mail/messages/:id) and downloads its
-  // attachments; so does anybody, from a mailbox that shares everything.
+  // reads the rest live (GET /api/mail/messages/:id) and views its
+  // attachments; so does anybody, from a mailbox that shares everything,
+  // and whoever reads a shared mailbox views its attachments
+  // (docs/inbox-attachments-plan.md §8). Nobody downloads them.
   const account = { is_shared: t.is_shared, user_id: t.user_id, visibility: t.visibility, status: t.mailbox_status };
-  const canDownload = mayReadContent(req.user?.id, account);
+  const canView = mayViewAttachments(req.user?.id, account);
+  // A mailbox that stores metadata only keeps no file names, and a file
+  // Outlook calls application/octet-stream is told apart by its name: whoever
+  // may view the attachments gets the names read live, as the message route
+  // does, and nothing is written.
+  if (canView && t.visibility === 'metadata') {
+    await Promise.all(rows.map(async (m) => {
+      if (!m.has_attachments || m.removed_at || !m.attachments.length || m.attachments.every((a) => a.name)) return;
+      m.attachments = withLiveNames(m.attachments, await liveAttachmentList({ account_id: t.account_id, provider_id: m.provider_id }));
+    }));
+  }
   const { user_id, ...thread } = t;
   res.json({
     data: {
       ...(thread.visibility === 'metadata' ? { ...thread, subject: null } : thread),
-      can_download: canDownload,
+      can_view_attachments: canView,
       messages: rows.map((m) => {
-        const v = applyVisibility(m, t.visibility);
+        const { provider_id: _providerId, attachments_listed_at: _listedAt, ...v } = applyVisibility(m, t.visibility);
         return {
           ...v,
-          attachments: v.attachments.map((a) => ({ ...a, url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null })),
+          attachments: v.attachments.map((a) => publicAttachment(m.id, a, canView)),
           can_read_live: canReadLive(req.user?.id, account, v),
         };
       }),
