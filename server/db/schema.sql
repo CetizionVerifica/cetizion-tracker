@@ -965,6 +965,8 @@ DECLARE s numeric; t numeric; n int; gross numeric; disc numeric; threshold nume
 BEGIN
   SELECT COUNT(*), COALESCE(SUM(amount), 0), COALESCE(SUM(round(amount * gst_rate / 100, 2)), 0), COALESCE(SUM(round(qty * rate, 2)), 0)
     INTO n, s, t, gross FROM quotation_lines WHERE quotation_id = p_quotation;
+  -- An export (not in INR) is zero-rated, whatever rate its lines show (102).
+  IF EXISTS (SELECT 1 FROM quotations WHERE id = p_quotation AND upper(currency) <> 'INR') THEN t := 0; END IF;
   IF n = 0 THEN
     -- Read from the PDF we sent (docs/email-enquiries-plan.md §3.9.7): the
     -- printed totals stand until real lines replace them, and come back if
@@ -1013,6 +1015,18 @@ END $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER quotation_lines_changed AFTER INSERT OR UPDATE OR DELETE ON quotation_lines
   FOR EACH ROW EXECUTE FUNCTION quotation_lines_changed();
+
+-- The currency decides whether there is GST at all, so changing it recomputes (102).
+-- Only with lines: without, the totals are the ones typed or printed, and a
+-- revision read from email sets them in the same UPDATE as the currency.
+CREATE OR REPLACE FUNCTION quotation_currency_changed() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM quotation_lines WHERE quotation_id = NEW.id) THEN PERFORM quotation_totals(NEW.id); END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER quotation_currency_changed AFTER UPDATE OF currency ON quotations
+  FOR EACH ROW WHEN (NEW.currency IS DISTINCT FROM OLD.currency) EXECUTE FUNCTION quotation_currency_changed();
 
 INSERT INTO settings (key, value, notes) VALUES
   ('quotation_validity_days', '30', 'How long a quotation stays open for acceptance, from its date. Sets valid_until on new quotations and revisions.'),

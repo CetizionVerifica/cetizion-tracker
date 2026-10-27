@@ -992,6 +992,36 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal(po.currency, 'USD');
   });
 
+  test('a USD PO with "GST extra" is registered at its basic value: an export is zero-rated', async () => {
+    const box = await mailbox();
+    await client('Export Extra Inc', 'ap@export-extra.com');
+    const q = await quotation('Export Extra Inc', 10000);
+    await db.query(`UPDATE quotations SET currency = 'USD' WHERE id = $1`, [q.id]);
+    const msg = poEmail({ from: { email: 'ap@export-extra.com' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077010', buyer: 'Export Extra Inc', basic: 10000, tax: 0 }) }] });
+    ai(reading({ po_number: '4500077010', buyer: { company_name: 'Export Extra Inc' }, currency: 'USD', basic: 10000, tax: 0,
+      tax_value: null, total_value: null, gst_extra: true }));
+    await deliver(box, [msg]);
+    const po = await poRow('4500077010');
+    assert.ok(po, JSON.stringify(await decision(box.id, msg.provider_id)));
+    assert.deepEqual([po.currency, Number(po.po_value)], ['USD', 10000]);
+    assert.doesNotMatch(po.remarks, /grossed up/);
+  });
+
+  test('no quotation on file: a USD PO makes a quotation with no GST, lines carrying the whole value', async () => {
+    const box = await mailbox();
+    const msg = poEmail({ from: { email: 'ap@export-new.com' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'EXN/1', buyer: 'Export New Inc', basic: 10000, tax: 0 }) }] });
+    ai(reading({ po_number: 'EXN/1', buyer: { company_name: 'Export New Inc' }, currency: 'USD', basic: 10000, tax: 0,
+      basic_value: null, tax_value: null, total_value: money(10000) }));
+    await deliver(box, [msg]);
+    const po = await poRow('EXN/1');
+    assert.ok(po, JSON.stringify(await decision(box.id, msg.provider_id)));
+    assert.deepEqual([po.currency, Number(po.po_value)], ['USD', 10000]);
+    const { rows: [q] } = await db.query('SELECT id, subtotal::float, tax_total::float, total::float FROM quotations WHERE quotation_no = $1', [po.quotation_no]);
+    assert.deepEqual([q.subtotal, q.tax_total, q.total], [10000, 0, 10000]);
+    const { rows: lines } = await db.query('SELECT gst_rate::float AS r FROM quotation_lines WHERE quotation_id = $1', [q.id]);
+    assert.deepEqual(lines.map((l) => l.r), [0]);
+  });
+
   test('a PO in another currency than its quotation goes to review instead of matching on the number alone', async () => {
     const box = await mailbox();
     await client('Rupee Buyer Ltd', 'ap@rupee-buyer.co.in');
