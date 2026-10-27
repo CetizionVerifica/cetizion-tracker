@@ -212,7 +212,7 @@ function QuoteToCash({ finance, sales }) {
     { step: 'Quoted', value: quoted, note: `${sales.quotations} quotations`, to: '/quotations', tone: 'bg-info' },
     { step: 'Won', value: won, note: decided ? `${sales.won} deals · ${Math.round((Number(sales.won) / decided) * 100)}% of decided` : `${sales.won} deals`, to: '/quotations?status=Won+-+PO+Received', tone: 'bg-settled' },
     { step: 'Invoiced', value: invoiced, note: `${money(finance.to_invoice_amount, 'INR', { compact: true })} ready to raise`, to: '/payment-stages', tone: 'bg-settled' },
-    { step: 'Received', value: received, note: `${money(Math.max(0, invoiced - received), 'INR', { compact: true })} still due`, to: '/collections', tone: 'bg-settled' },
+    { step: 'Received (incl. TDS)', value: received, note: `${money(Math.max(0, invoiced - received), 'INR', { compact: true })} still due`, to: '/collections', tone: 'bg-settled' },
   ];
   return (
     <section aria-label="From quote to cash" className={`${CARD} p-5`}>
@@ -279,7 +279,7 @@ function Rail({ finance, sales, travel, visits }) {
           <h3 className={SECTION}>At a glance</h3>
           {[
             ['Left to collect', finance.outstanding, Number(finance.outstanding) > 0 ? 'text-late' : 'text-foreground'],
-            ['Open pipeline', Number(sales.value_inr) - Number(sales.won_value_inr), 'text-foreground'],
+            ['Open pipeline', sales.open_value_inr, 'text-foreground'],
             ['Travel cost', travel.total_cost, 'text-foreground'],
           ].map(([label, value, tone]) => (
             <div key={label} className="flex justify-between gap-3 text-[13px] text-secondary-text">

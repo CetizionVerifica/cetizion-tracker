@@ -157,7 +157,7 @@ function Order({ o, ctx }) {
         : <>Value {exact(o.value, c)}{c !== 'INR' ? ' (no GST)' : ''}</>}
       </div>
       <dl className="portal__figures">
-        {[['Billed', o.billed], ['Received', o.received], ['Outstanding', o.outstanding], ['Still to bill', o.to_bill]].map(([label, v]) => (
+        {[['Billed', o.billed], ['Received (incl. TDS)', o.received], ['Outstanding', o.outstanding], ['Still to bill', o.to_bill]].map(([label, v]) => (
           <div key={label}><dt>{label}</dt><dd>{exact(v, c)}</dd></div>
         ))}
       </dl>
@@ -370,7 +370,7 @@ function Invoices({ ctx }) {
         </div>
       ))}
       {!s.data.length && <p className="accept__muted">No invoices yet.</p>}
-      {s.data.length > 0 && <p className="accept__muted">Total, paid and outstanding include GST. Received is what was paid plus TDS deducted, so an invoice can be settled with less paid than its total.</p>}
+      {s.data.length > 0 && <p className="accept__muted">Total, paid and outstanding include GST. Outstanding is the total less what was paid and the TDS deducted, so an invoice can be settled with less paid than its total.</p>}
       {!ctx.preview && <Requests version={version} />}
     </>
   );

@@ -109,7 +109,8 @@ export function glanceRows(data, { money = (v) => String(v), max = 4 } = {}) {
       detail: [listed(d.pos_received, max), g.pos_registered_late ? `${count(g.pos_registered_late, 'older PO')} registered` : ''].filter(Boolean).join('; '),
     },
     { metric: 'Invoices raised', count: valued(g.invoices_raised, g.invoices_raised_inr), detail: listed(d.invoices_raised, max) },
-    { metric: 'Payments received', count: valued(g.payments_received, g.payments_received_inr), detail: listed(d.payments_received, max) },
+    // payments.amount: the cash that came in, TDS deducted not counted.
+    { metric: 'Payments received (cash)', count: valued(g.payments_received, g.payments_received_inr), detail: listed(d.payments_received, max) },
     { metric: 'Other sales activity', count: String(other.length), detail: listed([...new Set(other.map((h) => h.client))], max) },
     {
       metric: 'Pending invoices', count: String(g.pending_invoices),

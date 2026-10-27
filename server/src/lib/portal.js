@@ -322,7 +322,7 @@ export async function statementPdf(company, invoices, today) {
     content: [
       { text: 'Cetizion Verifica', color: '#0f766e', bold: true, fontSize: 14 },
       { text: `Statement of account for ${company.name}`, fontSize: 12, margin: [0, 6, 0, 0] },
-      { text: `As on ${today}. Total, paid and outstanding include GST; received is paid plus TDS deducted.`, color: '#64748b', margin: [0, 2, 0, 12] },
+      { text: `As on ${today}. Total, paid and outstanding include GST; outstanding is the total less what was paid and the TDS deducted.`, color: '#64748b', margin: [0, 2, 0, 12] },
       {
         table: {
           headerRows: 1, widths: ['auto', 'auto', 'auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],

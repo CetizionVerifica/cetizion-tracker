@@ -114,5 +114,8 @@ test('each section CSV comes from the same report', () => {
   assert.deepEqual(csv.repeatOrdersCsvRows(report).map((r) => [r.PO, r['Earlier POs']]), [['PO-002', 1]]);
   assert.deepEqual(csv.revenueCsvRows(report).at(-1).Month, 'Total');
   assert.equal(csv.revenuePosCsvRows(report).length, 2);
+  // CSV headers stay as they were: spreadsheets key on them. The PDF says incl. TDS.
+  assert.ok('Received (INR)' in csv.revenueCsvRows(report)[0]);
+  assert.ok('Received (INR)' in csv.revenuePosCsvRows(report)[0]);
   assert.deepEqual(csv.newCustomersCsvRows(report).map((r) => r.Enquiry), ['E1', 'E2']);
 });
