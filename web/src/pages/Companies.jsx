@@ -10,7 +10,6 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
-import { mergeMessage, sumMoved } from '../lib/companyMerge.js';
 
 /** Where this browser remembers that the duplicates banner was dismissed. */
 const DUPES_HIDDEN = 'cetizion.companies.duplicates';
@@ -75,17 +74,9 @@ export default function Companies() {
     if (!losers.length) return;
     setBusy(true);
     try {
-      // Each merge reports what it moved; the toast adds the lot up, because
-      // what a person folding four spellings together wants back is the total
-      // that crossed over, not four receipts (#103).
-      const results = [];
-      for (const m of losers) {
-        const res = await api.action(`/companies/${m.id}/merge`, { into: keepId });
-        results.push(res?.data);
-      }
+      for (const m of losers) await api.action(`/companies/${m.id}/merge`, { into: keepId });
       const keep = review.members.find((m) => m.id === keepId);
-      const folded = `${losers.length} spelling${losers.length === 1 ? '' : 's'} folded into ${keep.name}`;
-      toast(mergeMessage(folded, sumMoved(results)), 'success');
+      toast(`${losers.length} spelling${losers.length === 1 ? '' : 's'} folded into ${keep.name}`, 'success');
       invalidateLookups();
       setReview(null);
       setRefresh((n) => n + 1);
