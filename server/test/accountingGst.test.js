@@ -152,6 +152,53 @@ describe('GST in accounting', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to ru
     assert.equal(Math.round(amounts.reduce((a, b) => a + b, 0) * 100), 0, 'debits and credits net to zero');
   });
 
+  test('creating a mixed-rate draft in Zoho sends a line and a tax per rate, adding up to the stage amount', async () => {
+    const ZOHO = { ZOHO_CLIENT_ID: 'id', ZOHO_CLIENT_SECRET: 'secret', ZOHO_REFRESH_TOKEN: 'refresh', ZOHO_ORGANIZATION_ID: 'org' };
+    const saved = Object.fromEntries(Object.keys(ZOHO).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ZOHO);
+    try {
+      const { rows: [co] } = await db.query(`SELECT id FROM companies LIMIT 1`);
+      await db.query(`DELETE FROM accounting_mappings`);
+      await db.query(`INSERT INTO accounting_mappings (kind, tracker_ref, books_ref) VALUES ('customer', $1, 'zoho-cust')`, [String(co.id)]);
+      // Saved through the form in any spelling, stored as one key.
+      for (const [key, id] of [['Intra:18%', 'zoho-gst18'], [' intra:5 ', 'zoho-gst5']]) {
+        await request(app).post('/api/accounting/mappings').set('Cookie', cookie).send({ kind: 'tax', tracker_ref: key, books_ref: id }).expect(201);
+      }
+      const { rows: keys } = await db.query(`SELECT tracker_ref FROM accounting_mappings WHERE kind = 'tax' ORDER BY tracker_ref`);
+      assert.deepEqual(keys.map((k) => k.tracker_ref), ['intra:18', 'intra:5']);
+      const bad = await request(app).post('/api/accounting/mappings').set('Cookie', cookie).send({ kind: 'tax', tracker_ref: 'gst18', books_ref: 'x' });
+      assert.equal(bad.status, 422);
+
+      const { zohoCreateDraft, draftForStage } = await import('../src/lib/accounting/providers.js');
+      const sent = [];
+      // A stand-in for Zoho: no real Zoho account is needed or touched.
+      const fetchImpl = async (url, init) => {
+        sent.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+        const json = String(url).includes('/oauth/') ? { access_token: 'tok', expires_in: 3600 } : { code: 0, invoice: { invoice_id: 'z1', invoice_number: 'INV-Z1', status: 'draft' } };
+        return { ok: true, status: 200, json: async () => json };
+      };
+      const d = await draftForStage(stage.mixed);
+      const result = await zohoCreateDraft(d, { fetchImpl });
+      assert.equal(result.books_id, 'z1');
+      const invoice = sent.find((s) => s.url.includes('/invoices')).body;
+      assert.equal(invoice.is_inclusive_tax, true);
+      assert.deepEqual(invoice.line_items.map((l) => [l.rate, l.tax_id]), [[118000, 'zoho-gst18'], [10500, 'zoho-gst5']]);
+      // What Zoho will total, from what was actually sent: the stage amount.
+      assert.equal(sum(...invoice.line_items.map((l) => l.rate)), d.total);
+
+      // A rate with no mapping: refused before anything reaches Zoho.
+      await db.query(`DELETE FROM accounting_mappings WHERE kind = 'tax' AND tracker_ref = 'intra:5'`);
+      sent.length = 0;
+      await assert.rejects(zohoCreateDraft(await draftForStage(stage.fallback), { fetchImpl }), (e) => e.status === 422 && /intra:5/.test(e.message));
+      // Only the default rate (no quotation lines): refused too.
+      await assert.rejects(zohoCreateDraft(await draftForStage(stage.estimated), { fetchImpl }), (e) => e.status === 422 && /no lines/.test(e.message));
+      assert.equal(sent.filter((s) => s.url.includes('/invoices')).length, 0, 'nothing reached Zoho');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      await db.query(`DELETE FROM accounting_mappings`);
+    }
+  });
+
   test('GSTR-1 reports the taxable value and the invoice value the client was billed', async () => {
     const res = await request(app).get(`/api/accounting/reports/gstr1-b2b.csv?from=${today}&to=${today}`).set('Cookie', cookie);
     assert.equal(res.status, 200);

@@ -99,7 +99,7 @@ One email a morning per person, about their previous working day, to management
 the AI from that person's facts, and checked against them before it can go.
 
 * **Who**: every active sales or admin user (not HR) whose personal mailbox is connected, unless an
-  admin exempted them (**Settings → Users & roles → ⋯ → Exempt from the personal daily MIS**). The
+  admin exempted them (**super admin portal → Users → Edit → untick “Gets the personal daily MIS email”**). The
   person cannot switch it off. Off for everyone until an admin presses **Switch on** on the card
   (`personal_mis_enabled`).
 * **When**: `reports.personal_daily` at 08:40 IST Tuesday to Saturday, for Monday to Friday, before

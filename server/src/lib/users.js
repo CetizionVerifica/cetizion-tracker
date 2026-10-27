@@ -36,6 +36,16 @@ export function normalizeEmail(email) {
   return trimmed === '' ? null : trimmed;
 }
 
+const blankAsNull = (v) => (typeof v === 'string' && v.trim() === '' ? null : (typeof v === 'string' ? v.trim() : v ?? null));
+
+/**
+ * The one definition of "this account was deleted" (archived, in the super
+ * admin portal): it has a deleted_users row. `alias` is the users table's
+ * name in the query it goes into.
+ */
+export const notDeleted = (alias = 'users') =>
+  `NOT EXISTS (SELECT 1 FROM deleted_users du WHERE du.user_id = ${alias}.id)`;
+
 /** Collapses the stray spaces a pasted name arrives with. */
 const normalizeName = (name) => (typeof name === 'string' ? name.trim().replace(/\s+/g, ' ') : '');
 
@@ -102,7 +112,7 @@ export async function findUserByEmail(email, db = pool) {
  * the database enforces the same rules whatever writes to it.
  */
 export async function createUser(
-  { name, email = null, password = null, role = 'sales', active = true },
+  { name, email = null, password = null, role = 'sales', active = true, phone = null, time_zone = null },
   db = pool
 ) {
   const cleanName = normalizeName(name);
@@ -117,10 +127,10 @@ export async function createUser(
   }
 
   const { rows } = await db.query(
-    `INSERT INTO users (name, email, password_hash, role, active)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO users (name, email, password_hash, role, active, phone, time_zone)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${COLUMNS}`,
-    [cleanName, cleanEmail, passwordHash, role, active]
+    [cleanName, cleanEmail, passwordHash, role, active, blankAsNull(phone), blankAsNull(time_zone)]
   );
   return rows[0];
 }
@@ -175,12 +185,16 @@ function asDomainError(err) {
 /**
  * Every user, newest account last, without their hashes. Attribution-only
  * rows come back exactly as they are — no invented address, no pretending
- * they could sign in.
+ * they could sign in. A deleted (archived) account carries its deleted_at:
+ * it is still listed, because reports name the people records belong to,
+ * and the screens that manage accounts leave it out.
  */
 export async function listUsers(db = pool) {
   const { rows } = await db.query(
-    `SELECT id, name, email, role, active, daily_mis, last_login_at, created_at, updated_at
-       FROM users ORDER BY active DESC, lower(name), id`
+    `SELECT u.id, u.name, u.email, u.role, u.active, u.daily_mis, u.phone, u.time_zone,
+            u.last_login_at, u.created_at, u.updated_at, du.deleted_at
+       FROM users u LEFT JOIN deleted_users du ON du.user_id = u.id
+      ORDER BY u.active DESC, lower(u.name), u.id`
   );
   return rows;
 }
@@ -195,7 +209,7 @@ export async function listUsers(db = pool) {
  * asking afterwards — inside the transaction, under the lock — asks the
  * question about the state that will actually exist.
  */
-async function refuseIfNoAdminLeft(client) {
+export async function refuseIfNoAdminLeft(client) {
   const { rows } = await client.query(
     `SELECT count(*)::int AS admins FROM users WHERE role = 'admin' AND active`
   );
@@ -217,7 +231,17 @@ function guardingAdmins(db, fn) {
   });
 }
 
-const FIELDS = { name: 'name', email: 'email', role: 'role', active: 'active', daily_mis: 'daily_mis' };
+/**
+ * A deleted account is archived, not gone, and it stays that way: it is not
+ * edited, given a password or switched back on. Every write below answers
+ * for it as for an id nobody holds.
+ */
+const NOT_DELETED = notDeleted('users');
+
+const FIELDS = {
+  name: 'name', email: 'email', role: 'role', active: 'active', daily_mis: 'daily_mis',
+  phone: 'phone', time_zone: 'time_zone',
+};
 
 /**
  * Change a user's name, email, role or active flag — and nothing else.
@@ -274,6 +298,13 @@ export async function updateUser(id, changes, db = pool, audit = null) {
     values.push(Boolean(changes.daily_mis));
     sets.push(`${FIELDS.daily_mis} = $${values.length}`);
   }
+  // Profile details the person can also set on their own account page.
+  // Blank is stored as null, as the account page stores it.
+  for (const field of ['phone', 'time_zone']) {
+    if (changes[field] === undefined) continue;
+    values.push(blankAsNull(changes[field]));
+    sets.push(`${FIELDS[field]} = $${values.length}`);
+  }
   if (sets.length === 0) throw new Error('Nothing to change.');
 
   values.push(id);
@@ -287,13 +318,13 @@ export async function updateUser(id, changes, db = pool, audit = null) {
       // this table can slip between the two statements.
       const before = audit
         ? (await client.query(
-            `SELECT id, name, email, role, active, daily_mis FROM users WHERE id = $1`, [id]
+            `SELECT id, name, email, role, active, daily_mis, phone, time_zone FROM users WHERE id = $1`, [id]
           )).rows[0] ?? null
         : null;
 
       const { rows } = await client.query(
-        `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length}
-         RETURNING id, name, email, role, active, daily_mis, last_login_at, created_at, updated_at`,
+        `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length} AND ${NOT_DELETED}
+         RETURNING id, name, email, role, active, daily_mis, phone, time_zone, last_login_at, created_at, updated_at`,
         values
       );
       if (!rows.length) return null;
@@ -328,7 +359,7 @@ export async function setUserPassword(id, password, db = pool, audit = null) {
       `UPDATE users
           SET password_hash = $1,
               session_version = session_version + 1
-        WHERE id = $2
+        WHERE id = $2 AND ${NOT_DELETED}
        RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
       [hash, id]
     );
@@ -361,3 +392,4 @@ export async function createUserAsAdmin(input, db = pool, audit = null) {
     throw asDomainError(err);
   }
 }
+

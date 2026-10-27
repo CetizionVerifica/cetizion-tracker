@@ -137,8 +137,8 @@ export function WaysIn() {
       </form>
 
       <p className="mt-6 text-[12px]/[1.6] text-muted-foreground">
-        Linking matches on the verified email of the provider account. A different address needs an admin
-        to attach it under <Link to="/settings/users">Users &amp; roles</Link>.
+        Linking matches on the verified email of the provider account. A different address needs the super
+        admin to change the email on your account.
       </p>
     </Pane>
   );

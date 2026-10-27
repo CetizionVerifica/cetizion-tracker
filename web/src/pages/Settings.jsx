@@ -10,7 +10,6 @@ import { Card, DataTable, Tabs, Badge, Alert, Empty, useToast } from '../compone
 import { RecordForm } from '../components/RecordForm.jsx';
 import { money } from '../lib/format.js';
 import { ApiTokens } from '../components/ApiTokens.jsx';
-import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -57,7 +56,6 @@ export default function Settings() {
   // the tab anyway would get 403 from each one.
   const tabs = [
     ...Object.entries(CATALOGUES).map(([key, c]) => ({ key, label: c.title })),
-    ...(isAdmin ? [{ key: 'users', label: 'Users' }] : []),
   ];
   const active = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
 
@@ -71,7 +69,7 @@ export default function Settings() {
 
         <Tabs active={active} onChange={setTab} tabs={tabs} />
 
-        {active === 'users' ? <UsersAdmin /> : <Catalogue key={active} {...CATALOGUES[active]} />}
+        <Catalogue key={active} {...CATALOGUES[active]} />
 
         {isAdmin && <ApiTokens />}
       </div>

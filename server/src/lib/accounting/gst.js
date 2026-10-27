@@ -60,7 +60,8 @@ export function splitGstAmount(gst, { ourState, theirState }) {
   return { cgst: 0, sgst: 0, igst: tax, tax, intra: false };
 }
 
-const paisa = (n) => Math.round(Number(n) * 100) / 100;
+/** Rounded to the paisa. */
+export const paisa = (n) => Math.round(Number(n) * 100) / 100;
 
 /**
  * The taxable value and GST inside an amount that already INCLUDES GST.

@@ -91,7 +91,7 @@ export async function duplicateOwners() {
     // carry them: two colleagues called alike ("Ravi Kumar", "Ravi Kumar
     // Reddy") would otherwise sit in the banner for good, now that the
     // Owner field writes exact account names. Two users called alike is for
-    // Settings → Users & roles.
+    // the super admin portal.
     .filter((members) => members.some((m) => !m.sales_user && weight(m) > 0))
     .map((members) => {
       // The sales user's own name first, because landing on it is what
@@ -154,7 +154,7 @@ export async function mergeOwners({ from, into, actor }) {
     const { rows: users } = await client.query(
       `SELECT id FROM users WHERE active AND role = 'sales' AND btrim(name) = $1`, [target]);
     if (!users.length) throw new ApiError(422, `${target} is not a sales user on the platform. Merge into one of them`);
-    if (users.length > 1) throw new ApiError(422, `${users.length} sales users are called ${target}. Rename one in Settings → Users & roles, then merge`);
+    if (users.length > 1) throw new ApiError(422, `${users.length} sales users are called ${target}. Rename one in the super admin portal, then merge`);
     const ownerId = users[0].id;
 
     // Another sales user's own name is a different person, never a

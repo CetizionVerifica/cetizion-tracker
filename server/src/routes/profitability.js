@@ -74,17 +74,18 @@ profitabilityRouter.get('/projects/:id', async (req, res) => {
     query(`SELECT c.claim_id AS ref, t.travel_id, t.employee_name AS vendor, c.expense_category, c.submission_date AS incurred_on, c.amount_claimed AS amount, c.amount_reimbursed AS amount_paid, c.approval_status
              FROM employee_expense_claims c JOIN travel_logs t ON t.travel_id = c.travel_id JOIN purchase_orders po ON po.po_number = t.po_number
             WHERE po.project_id = $1 ORDER BY c.submission_date NULLS LAST`, [id]),
-    query(`SELECT pc.*, d.file_name FROM project_costs pc LEFT JOIN documents d ON d.id = pc.document_id WHERE pc.project_id = $1 ORDER BY pc.incurred_on NULLS LAST, pc.id`, [id]),
+    // Each cost at the rate in force on the day it was incurred, exactly as
+    // v_project_profitability counts it, so a line and the total it is part
+    // of never disagree. No rate on or before that day: a gap, as there.
+    query(`SELECT pc.*, d.file_name, r.rate AS fx_rate, round(pc.amount * r.rate, 2) AS amount_inr
+             FROM project_costs pc LEFT JOIN documents d ON d.id = pc.document_id
+             CROSS JOIN LATERAL (SELECT fx_rate_on(pc.currency, COALESCE(pc.incurred_on, pc.created_at::date)) AS rate) r
+            WHERE pc.project_id = $1 ORDER BY pc.incurred_on NULLS LAST, pc.id`, [id]),
   ]);
-  // The rates live in exchange_rates since #79; the fx_rate_% settings were
-  // retired and refuse a value, so reading them labelled every foreign cost
-  // "no exchange rate" while the rate was sitting on the Settings screen.
-  const { rows: fx } = await query('SELECT DISTINCT ON (from_currency) from_currency AS currency, rate FROM exchange_rates WHERE to_currency = $1 ORDER BY from_currency, effective_from DESC', ['INR']);
-  const rates = Object.fromEntries(fx.filter((r) => Number(r.rate) > 0).map((r) => [r.currency, Number(r.rate)]));
   const lines = [
     ...vendors.rows.map((r) => ({ kind: 'travel_vendor', ...r, gap: r.amount == null ? 'No invoice amount' : null, committed: r.amount == null ? 0 : Math.max(Number(r.amount) - Number(r.amount_paid), 0) })),
     ...claims.rows.map((r) => ({ kind: 'expense_claim', ...r, gap: null, committed: r.approval_status === 'Rejected' ? 0 : Math.max(Number(r.amount) - Number(r.amount_paid), 0) })),
-    ...manual.rows.map((r) => ({ kind: 'manual', ref: r.id, ...r, gap: r.amount == null ? 'No amount' : r.currency !== 'INR' && !rates[r.currency] ? `No ${r.currency} exchange rate in Settings` : null })),
+    ...manual.rows.map((r) => ({ kind: 'manual', ref: r.id, ...r, gap: r.amount == null ? 'No amount' : r.fx_rate == null ? `No ${r.currency} exchange rate on or before ${r.incurred_on ? 'the date of the cost' : 'the day it was entered'} in Settings` : null })),
   ];
   const { rows: [{ value: alert }] } = await query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'margin_alert_percent'), '20') AS value`);
   res.json({ data: { ...p, margin_alert_percent: Number(alert), lines } });
@@ -102,11 +103,11 @@ export async function costAlerts({ db = { query }, notify } = {}) {
       WHERE pp.revenue > 0 AND pp.total_cost >= pp.revenue * setting_num('cost_alert_share_percent', 80) / 100`);
   const raised = [];
   for (const r of rows) {
-    const n = await notify({ kind: 'cost_alert', title: `${r.project_id}: costs at ${r.share}% of the PO value`, body: `${r.client_name} · cost ${r.total_cost} of ${r.revenue}`, entity: 'project', entityId: r.project_id, link: `/projects/${encodeURIComponent(r.project_id)}`, dedupeKey: `cost-alert:${r.project_id}:${r.limit_share}` }, db);
+    const n = await notify({ kind: 'cost_alert', title: `${r.project_id}: costs at ${r.share}% of the PO value before GST`, body: `${r.client_name} · cost ${r.total_cost} of ${r.revenue}`, entity: 'project', entityId: r.project_id, link: `/projects/${encodeURIComponent(r.project_id)}`, dedupeKey: `cost-alert:${r.project_id}:${r.limit_share}` }, db);
     if (!n) continue;
     await db.query(`INSERT INTO tasks (entity, entity_id, title, description, due_at, type, priority, assignee, created_by)
                     VALUES ('project', $1, $2, $3, CURRENT_DATE + 2, 'follow_up', 'high', $4, 'system')`,
-      [r.project_id, `Review costs: ${r.share}% of the PO value spent`, `Costs ${r.total_cost} against PO value ${r.revenue}. Check what is left to spend.`, r.project_manager || null]);
+      [r.project_id, `Review costs: ${r.share}% of the PO value before GST spent`, `Costs ${r.total_cost} against PO value before GST ${r.revenue}. Check what is left to spend.`, r.project_manager || null]);
     raised.push(r.project_id);
   }
   return raised;

@@ -129,7 +129,7 @@ const ANCHORS = [
   'GET /api/health',
   'POST /api/auth/login',
   'GET /api/auth/config',
-  'POST /api/users',
+  'POST /api/super-admin/users',
   'GET /metrics',
 ];
 
