@@ -401,4 +401,5 @@ POST /api/inbox/:id/reply · /convert
 Also: `/api/dashboard/*` for every screen's figures, `/api/export/<resource>.csv|xlsx`,
 `/api/search` behind the command palette, `/api/webhooks` for n8n
 ([docs/webhooks-n8n.md](docs/webhooks-n8n.md)), and `/api/mcp` for assistants
-([docs/mcp.md](docs/mcp.md)).
+([docs/mcp.md](docs/mcp.md)), which claude.ai can add as a custom connector
+through `/api/oauth/*` and `/.well-known/oauth-*` (#249).

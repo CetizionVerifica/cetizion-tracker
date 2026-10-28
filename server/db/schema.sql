@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS deleted_users, questionnaire_response_files, questionnaire_links, questionnaire_responses, questionnaire_versions, questionnaires,
+DROP TABLE IF EXISTS oauth_tokens, oauth_requests, oauth_grants, oauth_clients, deleted_users, questionnaire_response_files, questionnaire_links, questionnaire_responses, questionnaire_versions, questionnaires,
   travel_vendor_credit_notes, travel_vendor_invoice_lines, travel_segments, trip_types,
   ai_usage_daily, email_triage, document_profile_corrections, company_document_profiles, receivable_list_lines, receivable_lists,
   portal_client_action_stages, portal_client_actions, email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
@@ -2631,6 +2631,85 @@ CREATE TABLE IF NOT EXISTS api_token_log (
 );
 
 CREATE INDEX IF NOT EXISTS api_token_log_token_idx ON api_token_log (token_id, created_at DESC);
+
+-- ---------------------------------------------------------------------
+-- claude.ai custom connector: OAuth 2.1 for /api/mcp (103, #249)
+-- ---------------------------------------------------------------------
+-- A client that registered itself (RFC 7591). Only redirect URIs on the
+-- server's allowlist are accepted, so registering one gains nothing but a
+-- place to send a code back to Claude.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id                 text PRIMARY KEY,
+  -- Null for a public client (token_endpoint_auth_method 'none').
+  client_secret_hash        text,
+  client_secret_expires_at  timestamptz,
+  client_name               text,
+  redirect_uris             text[] NOT NULL,
+  -- The rest of what the client registered, returned as it was given.
+  metadata                  jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at                timestamptz NOT NULL DEFAULT now()
+);
+
+-- One person's approval of one client. Disconnecting revokes it, and every
+-- token issued under it stops with it.
+CREATE TABLE IF NOT EXISTS oauth_grants (
+  id            serial PRIMARY KEY,
+  user_id       int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id     text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  -- Off unless the person ticked it on the consent screen, as for tokens.
+  can_write     boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_used_at  timestamptz,
+  revoked_at    timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS oauth_grants_user_idx ON oauth_grants (user_id);
+
+-- An authorization request, from the moment Claude sends the browser here
+-- until its code is exchanged. The request id is what the consent screen
+-- holds; the code exists only once the person has approved.
+CREATE TABLE IF NOT EXISTS oauth_requests (
+  id_hash         text PRIMARY KEY,
+  client_id       text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  redirect_uri    text NOT NULL,
+  code_challenge  text NOT NULL,
+  state           text,
+  scopes          text[] NOT NULL DEFAULT '{}',
+  resource        text NOT NULL,
+  expires_at      timestamptz NOT NULL,
+  grant_id        int REFERENCES oauth_grants(id) ON DELETE CASCADE,
+  code_hash       text UNIQUE,
+  decided_at      timestamptz,
+  used_at         timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Access tokens (an hour) and refresh tokens (thirty days, replaced on every
+-- use). Opaque and hashed, so revoking one bites on the next call.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  id           bigserial PRIMARY KEY,
+  token_hash   text NOT NULL UNIQUE,
+  grant_id     int NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+  kind         text NOT NULL CHECK (kind IN ('access', 'refresh')),
+  resource     text NOT NULL,
+  expires_at   timestamptz NOT NULL,
+  -- A refresh token that has been exchanged points at the one that replaced
+  -- it. Presenting it again is a stolen copy, and the whole grant is revoked.
+  replaced_by  bigint REFERENCES oauth_tokens(id) ON DELETE SET NULL,
+  revoked_at   timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS oauth_tokens_grant_idx ON oauth_tokens (grant_id);
+
+-- A tool call made through a connector is logged like one made with a token.
+-- Added after the fact (103), so it sits at the end of api_token_log.
+ALTER TABLE api_token_log ADD COLUMN IF NOT EXISTS grant_id int REFERENCES oauth_grants(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS api_token_log_grant_idx ON api_token_log (grant_id, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('mcp_connector_roles', 'admin,sales', 'Who may connect Claude (claude.ai) to the tracker with their own sign-in: admin, sales, both, or none to switch the connector off.')
+ON CONFLICT (key) DO NOTHING;
 
 -- Operational alerts (#38)
 INSERT INTO settings (key, value, notes) VALUES

@@ -4,7 +4,45 @@ The tracker runs an MCP server at `/api/mcp`, so Claude Code, Claude Desktop
 and other MCP clients can answer questions from live data: this quarter's
 pipeline, a client's history, overdue invoices, a sales person's numbers.
 
-## Get a token
+## Connect from claude.ai (recommended)
+
+Anyone with a tracker account can add the tracker to claude.ai as a custom
+connector, with their own sign-in and no token to copy (#249). It then works
+in claude.ai, the Claude desktop app and the Claude mobile app, from anywhere.
+
+1. In the tracker, open **Settings → Claude connector** and copy the
+   connector address: `https://tracker.cetizionverifica.com/api/mcp`.
+2. In claude.ai, open **Settings → Connectors → Add custom connector**. Name it
+   *Cetizion tracker*, paste the address and leave the advanced settings empty.
+3. Choose **Connect**. claude.ai opens the tracker: sign in if asked, then
+   **Allow**. Tick *Let it add notes and tasks* only if Claude should write.
+
+Claude then sees exactly what you see in the tracker: a sales person's own
+clients and deals, everything for an administrator. Disconnect at any time in
+**Settings → Claude connector**; an administrator can disconnect anybody's and
+chooses there who may connect at all (`mcp_connector_roles`: administrators,
+sales, both, or nobody). The travel desk cannot connect yet, because the tools
+have no travel-desk scoping. A connection stops on the next call when it is
+disconnected, the account is switched off or deleted, or its role is closed.
+
+How it works: the tracker is its own OAuth 2.1 authorization server for
+`/api/mcp`. claude.ai finds it from the `401` (`WWW-Authenticate:
+resource_metadata=…`) and `/.well-known/oauth-protected-resource/api/mcp`,
+registers itself (`/api/oauth/register`), sends you to
+`/api/oauth/authorize` and the consent page, and exchanges the code with its
+PKCE verifier at `/api/oauth/token`. Access tokens (`ctzo_…`) last an hour;
+refresh tokens are replaced on every use, and a reused one ends the
+connection. Nothing from Microsoft or Google is passed on. Registration only
+accepts Claude's own callbacks (`https://claude.ai/api/mcp/auth_callback`,
+`https://claude.com/api/mcp/auth_callback`) and loopback addresses for
+desktop clients; `MCP_OAUTH_REDIRECT_URIS` adds more. The issuer is the
+tracker's public address (Settings `public_app_url`, else the first
+`CORS_ORIGIN`).
+
+Calls made through a connector appear in **Settings → API tokens → Recent
+calls**, named for the person and the app.
+
+## Get a token (Claude Code, scripts)
 
 **Settings → Assistant access (MCP) → + Token.** Choose whose records it may
 see: one sales person's (matched on the sales-person name on quotations,
@@ -351,9 +389,9 @@ Ask for a filter before asking for a bigger page. `stage`, `owner`,
 
 ## Keep it inside
 
-The endpoint needs a token, is rate limited, and is meant for use from
-company machines. Do not paste tokens into chats or tickets; revoke any
-token that may have been seen.
+The endpoint needs a token or a connector sign-in and is rate limited. Do not
+paste tokens into chats or tickets; revoke any token that may have been seen.
+Whatever Claude reads through either goes into that Claude conversation.
 
 ## The numbers are the tracker's, not the assistant's
 

@@ -95,8 +95,13 @@ export const AUTH_MECHANISMS = {
   },
   'api-token': {
     authenticates: true,
-    proof: 'An Authorization: Bearer ctz_... token, SHA-256 hashed and matched against a non-revoked api_tokens row, which also carries the role and person the token may see.',
+    proof: 'An Authorization: Bearer token: either ctz_..., SHA-256 hashed and matched against a non-revoked api_tokens row, which also carries the role and person the token may see; or a ctzo_... access token from the connector sign-in (#249), hashed and matched against an unexpired, unrevoked oauth_tokens row for this resource whose grant stands and whose users row is active, the role and name read from that row on every call.',
     description: 'MCP clients (#50). The token, not a session, is the identity.',
+  },
+  'oauth-client': {
+    authenticates: true,
+    proof: 'A registered client_id (with its secret, SHA-256 hashed and compared in constant time, for a confidential client) plus the grant itself: a single-use, ten-minute authorization code whose PKCE S256 verifier must hash to the challenge the person approved, or an unexpired refresh token that is replaced on every use, a reused one revoking the whole grant.',
+    description: 'The OAuth token and revocation endpoints for the claude.ai connector (#249). No session; the code or refresh token is the credential and it is bound to one client and one person.',
   },
   'metrics-token-or-admin-session': {
     authenticates: true,
@@ -222,6 +227,23 @@ export const routes = [
   { method: 'POST', path: '/api/mcp', access: 'public', mechanism: 'api-token', openBecause: 'MCP clients authenticate with an API token instead of a session (#50). No token, no answer.', restrictions: ['api-token-scope'] },
   { method: 'GET', path: '/api/mcp', access: 'public', mechanism: 'none', openBecause: 'A fixed 405 telling a client to use POST. It reads nothing and reveals nothing.' },
   { method: 'DELETE', path: '/api/mcp', access: 'public', mechanism: 'none', openBecause: 'A fixed 405 with an empty body, for MCP clients that try to end a session this stateless server never opened.' },
+
+  // ------------------------------------------- claude.ai connector (#249)
+  { method: 'GET', path: '/.well-known/oauth-protected-resource', access: 'public', mechanism: 'none', openBecause: 'RFC 9728 discovery: which server signs people in for /api/mcp. A fixed document built from the tracker\'s own public address; it reads no record.' },
+  { method: 'GET', path: '/.well-known/oauth-protected-resource/api/mcp', access: 'public', mechanism: 'none', openBecause: 'The same discovery document at the path-specific address RFC 9728 names for /api/mcp.' },
+  { method: 'GET', path: '/.well-known/oauth-authorization-server', access: 'public', mechanism: 'none', openBecause: 'RFC 8414 discovery: where to register, authorize and get tokens. A fixed document; it reads no record.' },
+  { method: 'GET', path: '/.well-known/openid-configuration', access: 'public', mechanism: 'none', openBecause: 'The same discovery document, for clients that look for OpenID discovery first.' },
+  { method: 'OPTIONS', path: '/api/oauth/register', access: 'public', mechanism: 'none', openBecause: 'A CORS preflight for browser-based MCP clients. It answers headers only.' },
+  { method: 'OPTIONS', path: '/api/oauth/token', access: 'public', mechanism: 'none', openBecause: 'A CORS preflight for browser-based MCP clients. It answers headers only.' },
+  { method: 'OPTIONS', path: '/api/oauth/revoke', access: 'public', mechanism: 'none', openBecause: 'A CORS preflight for browser-based MCP clients. It answers headers only.' },
+  { method: 'POST', path: '/api/oauth/register', access: 'public', mechanism: 'none', openBecause: 'Dynamic client registration (RFC 7591), which claude.ai needs to add a connector. Registering grants nothing: redirect URIs must be Claude\'s callbacks or a loopback address, and every token still needs a signed-in person to approve it. Rate limited per address.' },
+  { method: 'GET', path: '/api/oauth/authorize', access: 'public', mechanism: 'none', openBecause: 'Checks the client, redirect and PKCE challenge, records the request and sends the browser to the consent screen, which needs a session. It issues nothing and reads no record.' },
+  { method: 'POST', path: '/api/oauth/token', access: 'public', mechanism: 'oauth-client', openBecause: 'Exchanges an approved code or a refresh token for tokens. The client is not a signed-in browser; the code or refresh token is the credential.' },
+  { method: 'POST', path: '/api/oauth/revoke', access: 'public', mechanism: 'oauth-client', openBecause: 'A client gives up its own token (RFC 7009); it can name only tokens issued to it.' },
+  { method: 'GET', path: '/api/oauth/requests/:id', access: 'public', mechanism: 'staff-session-optional', openBecause: 'The consent screen: what is asking for access. Mounted with the OAuth routes, outside requireAuth, but it runs requireAuth itself.', restrictions: ['self-only'] },
+  { method: 'POST', path: '/api/oauth/requests/:id', access: 'public', mechanism: 'staff-session-optional', openBecause: 'Allow or deny on the consent screen. The grant is the signed-in person\'s own, never wider than their role; HR and roles closed in Settings are refused.', restrictions: ['self-only', 'settings-override'] },
+  { method: 'GET', path: '/api/oauth/grants', access: 'public', mechanism: 'staff-session-optional', openBecause: 'Connected apps: your own connections; an administrator may list everybody\'s. Runs requireAuth itself.', restrictions: ['self-only'] },
+  { method: 'DELETE', path: '/api/oauth/grants/:id', access: 'public', mechanism: 'staff-session-optional', openBecause: 'Disconnect: your own connection, or anybody\'s for an administrator. Runs requireAuth itself.', restrictions: ['self-only'] },
 
   // ----------------------------------------------------------- metrics
   { method: 'GET', path: '/metrics', access: 'public', mechanism: 'metrics-token-or-admin-session', openBecause: 'Mounted outside /api so a scraper can reach it with a bearer token, but it refuses anyone who is neither the token holder nor a current administrator.' },

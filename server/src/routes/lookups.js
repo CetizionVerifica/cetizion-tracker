@@ -252,6 +252,15 @@ const SENDER_SETTINGS = {
     if (!/^\d{1,4}$/.test(v.trim()) || Number(v) > 1000) throw unprocessable('A whole number of calls a day, from 0 to 1000');
     return String(Number(v));
   },
+  // Who may connect Claude with their own sign-in (#249). Saved in one
+  // canonical form, because the connector reads it on every call.
+  async mcp_connector_roles(v) {
+    const value = v.trim().toLowerCase();
+    if (value === 'none') return 'none';
+    const roles = [...new Set(value.split(',').map((s) => s.trim()).filter(Boolean))];
+    if (!roles.length || roles.some((r) => !['admin', 'sales'].includes(r))) throw unprocessable('admin, sales, admin,sales, or none');
+    return ['admin', 'sales'].filter((r) => roles.includes(r)).join(',');
+  },
 };
 
 // Changing a setting changes what the whole tracker computes — an FX rate

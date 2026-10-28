@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth.jsx';
 import { Assumptions, Catalogue, ExchangeRates, Holidays, CATALOGUES } from './Settings.jsx';
 import { CompanyProfile } from './CompanyProfile.jsx';
 import { ApiTokens } from '../components/ApiTokens.jsx';
+import { ClaudeConnector } from '../components/ClaudeConnector.jsx';
 import { SignInMethods } from './SignInMethods.jsx';
 import Mailboxes from './Mailboxes.jsx';
 import Webhooks from './Webhooks.jsx';
@@ -97,6 +98,8 @@ const GROUPS = [
     items: [
       { to: 'sign-in', label: 'Sign-in methods', element: <SignInMethods />, adminOnly: true },
       { to: 'tokens', label: 'API tokens', element: <ApiTokens />, adminOnly: true },
+      // Every role but HR: each person connects Claude as themselves (#249).
+      { to: 'claude', label: 'Claude connector', element: <ClaudeConnector /> },
     ],
   },
   {
