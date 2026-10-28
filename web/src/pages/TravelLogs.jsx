@@ -14,7 +14,7 @@ const options = (rows, label) => rows.map((r) => ({ value: String(r.id), label: 
  */
 export function tripFields(lookups) {
   return [
-    { name: 'travel_id', label: 'Travel ID', required: true, hint: 'e.g. TRV-2026-027 — the key tying the travel records together' },
+    { name: 'travel_id', label: 'Travel ID', auto: 'travel' },
     { name: 'trip_type_id', label: 'Trip type', type: 'select', options: options(lookups.trip_types, (t) => `${t.name}${t.chargeable ? ' (chargeable)' : ''}`), hint: 'Left blank: Chargeable with a PO or project, Non-chargeable without' },
     { name: 'po_number', label: 'Billed to PO', type: 'select', options: lookups.purchase_orders.map((p) => ({ value: p.po_number, label: `${p.po_number} — ${p.client_name}` })), hint: 'Leave blank for internal travel' },
     { name: 'project_id', label: 'Project (no PO yet)', type: 'select', options: lookups.projects.map((p) => ({ value: p.project_id, label: `${p.project_id} — ${p.client_name}${p.service_request_no ? ` · ${p.service_request_no}` : ''}` })), hint: 'Only when there is no PO; with a PO the project is the PO\'s' },

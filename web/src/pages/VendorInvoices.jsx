@@ -11,7 +11,7 @@ const vendorOptions = (lookups) => lookups.travel_vendor_list.map((v) => ({ valu
 /** A travel agency invoice's header (#196 §4.4): its lines are added on the invoice's own page. */
 export function vendorInvoiceFields(lookups) {
   return [
-    { name: 'vendor_invoice_id', label: 'Reference', required: true, hint: 'Your internal reference, e.g. VINV-2026-001' },
+    { name: 'vendor_invoice_id', label: 'Reference', auto: 'vendor_invoice' },
     { name: 'vendor_id', label: 'Vendor', type: 'select', options: vendorOptions(lookups), hint: 'Left blank: the trip\'s vendor' },
     { name: 'travel_id', label: 'Trip (one trip)', type: 'select', options: lookups.trips.map((t) => ({ value: t.travel_id, label: `${t.travel_id} — ${t.employee_name}${t.destination ? ` (${t.destination})` : ''}` })), hint: 'For a bill covering one trip. A bill for several trips leaves this blank and gets a line per trip on its page' },
     { name: 'vendor_invoice_no', label: "Vendor's invoice number", hint: 'e.g. HT/2627/1877' },

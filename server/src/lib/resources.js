@@ -574,6 +574,10 @@ export const resources = {
     view: 'v_travel_logs',
     label: 'Trip',
     naturalKey: 'travel_id',
+    // travel_id is assigned on create (TRV-2026-027) and never changed.
+    autoId: 'travel',
+    // The year in the generated number comes from the trip's start date.
+    autoIdDateField: 'travel_start_date',
     defaultSort: 'travel_start_date DESC NULLS LAST, id DESC',
     search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name', 'origin'],
     filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name',
@@ -587,7 +591,7 @@ export const resources = {
       'vendor_id', 'project_id', 'staff_id', 'trip_type_id', 'origin', 'booking_date', 'cancelled', 'billed_stage_id', 'client_label',
     ],
     schema: z.object({
-      travel_id: requiredStr(40),
+      travel_id: str(40),
       po_number: str(60),
       service_delivered: str(300),
       employee_name: requiredStr(160),
@@ -627,6 +631,10 @@ export const resources = {
     view: 'v_travel_vendor_invoices',
     label: 'Vendor invoice',
     naturalKey: 'vendor_invoice_id',
+    // vendor_invoice_id is our reference (VINV-2026-001), assigned on create
+    // and never changed; the vendor's own number is vendor_invoice_no.
+    autoId: 'vendor_invoice',
+    autoIdDateField: 'invoice_date',
     defaultSort: 'invoice_date DESC NULLS FIRST, id DESC',
     search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name'],
     filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id', 'vendor_id'],
@@ -639,7 +647,7 @@ export const resources = {
       'vendor_id', 'document_id', 'vendor_gstin_on_invoice', 'place_of_supply',
     ],
     schema: z.object({
-      vendor_invoice_id: requiredStr(60),
+      vendor_invoice_id: str(60),
       // One trip, the old way: the invoice gets one line for it. An invoice
       // covering several trips leaves this blank and has lines (#196).
       travel_id: str(40),
@@ -680,6 +688,9 @@ export const resources = {
     view: 'v_employee_expense_claims',
     label: 'Expense claim',
     naturalKey: 'claim_id',
+    // claim_id is assigned on create (CLM-2026-002) and never changed.
+    autoId: 'claim',
+    autoIdDateField: 'submission_date',
     defaultSort: 'submission_date DESC NULLS LAST, id DESC',
     search: ['claim_id', 'travel_id', 'employee_name', 'expense_category'],
     filters: ['travel_id', 'approval_status', 'status', 'employee_name', 'claim_month', 'project_id'],
@@ -690,7 +701,7 @@ export const resources = {
       'amount_reimbursed', 'reimbursement_date', 'remarks',
     ],
     schema: z.object({
-      claim_id: requiredStr(60),
+      claim_id: str(60),
       travel_id: requiredStr(40),
       expense_category: str(120),
       claim_month: str(20),
