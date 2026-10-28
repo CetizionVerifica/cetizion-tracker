@@ -118,7 +118,7 @@ describe('claude.ai connector', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not 
     assert.equal(evil.body.error, 'invalid_redirect_uri');
   });
 
-  test('authorize refuses a missing or plain PKCE challenge, an unknown client and a foreign resource', async () => {
+  test('authorize refuses a missing or plain PKCE challenge, an unknown client and a foreign resource, and drops unknown scopes', async () => {
     const client = (await register().expect(201)).body;
     const unknown = await authorize({ client_id: 'nobody', code_challenge: pkce().challenge }).expect(400);
     assert.equal(unknown.body.error, 'invalid_client');
@@ -128,13 +128,16 @@ describe('claude.ai connector', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not 
       [{ code_challenge: undefined }, 'invalid_request'],
       [{ code_challenge: pkce().challenge, code_challenge_method: 'plain' }, 'invalid_request'],
       [{ code_challenge: pkce().challenge, resource: 'https://elsewhere.example/mcp' }, 'invalid_target'],
-      [{ code_challenge: pkce().challenge, scope: 'tracker:everything' }, 'invalid_scope'],
     ]) {
       const res = await authorize({ client_id: client.client_id, ...query }).expect(302);
       const back = new URL(res.headers.location);
       assert.equal(back.searchParams.get('error'), error);
       assert.equal(back.searchParams.get('state'), 'st-1');
     }
+    // A scope the server does not offer is dropped, not fatal: claude.ai or
+    // another client asking for openid still gets a reading connection.
+    await authorize({ client_id: client.client_id, code_challenge: pkce().challenge, scope: 'openid tracker:everything' }).expect(302)
+      .then((res) => assert.match(res.headers.location, /^\/oauth\/consent\?request=ctzq_/));
     const ok = await authorize({ client_id: client.client_id, code_challenge: pkce().challenge }).expect(302);
     assert.match(ok.headers.location, /^\/oauth\/consent\?request=ctzq_/);
   });

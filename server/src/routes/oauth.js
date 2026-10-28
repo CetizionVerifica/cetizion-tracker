@@ -134,8 +134,11 @@ oauthRouter.get('/authorize', limit(15 * 60 * 1000, 100), async (req, res) => {
   if (q.response_type !== 'code') return fail('unsupported_response_type', 'response_type must be code');
   if (typeof q.code_challenge !== 'string' || !/^[A-Za-z0-9\-_]{43}$/.test(q.code_challenge)) return fail('invalid_request', 'A PKCE code_challenge is required');
   if (q.code_challenge_method !== 'S256') return fail('invalid_request', 'code_challenge_method must be S256');
-  const scopes = typeof q.scope === 'string' && q.scope.trim() ? q.scope.trim().split(/\s+/) : ['tracker:read'];
-  if (scopes.some((s) => !SCOPES.includes(s))) return fail('invalid_scope', `Scopes offered: ${SCOPES.join(' ')}`);
+  // A scope this server does not offer (openid, say) is dropped rather than
+  // refused: OAuth lets a server grant less than was asked, and refusing
+  // would fail the whole connection over a word. Reading is the floor.
+  const asked = typeof q.scope === 'string' ? q.scope.trim().split(/\s+/).filter((s) => SCOPES.includes(s)) : [];
+  const scopes = asked.length ? asked : ['tracker:read'];
   const site = await origin();
   const resource = resourceUrl(site);
   // RFC 8707: a token is only ever for this server's MCP endpoint.
@@ -199,7 +202,10 @@ oauthRouter.post('/requests/:id', requireAuth, async (req, res) => {
       ? await db.query('UPDATE oauth_grants SET can_write = $2 WHERE id = $1 RETURNING id', [existing.id, canWrite])
       : await db.query('INSERT INTO oauth_grants (user_id, client_id, can_write) VALUES ($1,$2,$3) RETURNING id', [req.user.id, r.client_id, canWrite]);
     const code = secret('code');
-    await db.query('UPDATE oauth_requests SET grant_id = $2, code_hash = $3 WHERE id_hash = $1', [r.id_hash, grant.id, hash(code)]);
+    // The code's ten minutes start now, not when the request arrived: signing
+    // in on the way here may have used most of the request's own.
+    await db.query(`UPDATE oauth_requests SET grant_id = $2, code_hash = $3, expires_at = now() + make_interval(secs => $4) WHERE id_hash = $1`,
+      [r.id_hash, grant.id, hash(code), REQUEST_TTL_S]);
     const u = new URL(r.redirect_uri);
     u.searchParams.set('code', code);
     if (r.state) u.searchParams.set('state', r.state);
