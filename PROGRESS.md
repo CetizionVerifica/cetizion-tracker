@@ -14,6 +14,16 @@ batches below, and Sami is working through them in order.
 
 ## Delivered
 
+### Claude from anywhere (issue #249)
+
+Anyone with a tracker account can now add the tracker to claude.ai, the
+Claude desktop app or the Claude phone app by pasting one address. Claude
+asks them to sign in to the tracker and press Allow, and from then on it
+answers from live data with exactly what that person can see. It reads only
+unless they tick "add notes and tasks". Each person can disconnect in
+Settings → Claude connector, and an administrator chooses who may connect and
+can end anybody's connection. The old tokens for Claude Code keep working.
+
 ### Bulk import of the sales sheet (issue #45)
 
 **What it does.** An admin uploads the sales Excel sheet. The system turns every

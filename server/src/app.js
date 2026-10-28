@@ -60,6 +60,7 @@ import { publicQuestionnaireRouter } from './routes/publicQuestionnaire.js';
 import { questionnaireResponseRouter, questionnaireRouter, questionnaireVersionRouter } from './routes/questionnaires.js';
 import { accountingRouter } from './routes/accounting.js';
 import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
+import { oauthRouter, wellKnownRouter } from './routes/oauth.js';
 import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
 import { requestLogger } from './lib/ops/logger.js';
 import { httpMetrics } from './lib/ops/metrics.js';
@@ -144,6 +145,12 @@ app.use('/api/hooks', incomingHooksRouter);
 app.use('/api/portal', portalRouter);
 // MCP clients authenticate with an API token instead of a session (#50).
 app.use('/api/mcp', mcpRouter);
+// claude.ai's custom connector signs in through OAuth (#249). Discovery has
+// to be mounted here, ahead of the single-page app, or its catch-all would
+// answer /.well-known/* with index.html. Each route checks its own proof;
+// the consent and Connected apps routes ask for a session themselves.
+app.use('/.well-known', wellKnownRouter);
+app.use('/api/oauth', oauthRouter);
 // The super admin portal manages accounts with its own sign-in and cookie,
 // never a staff session; see auth/superAdmin.js.
 app.use('/api/super-admin', superAdminRouter);

@@ -87,6 +87,14 @@ export default function Login() {
   // in the server log, not on a page anyone can reach unauthenticated.
   const [params] = useSearchParams();
   const refused = params.get('sso') === 'refused';
+  // Back to this page afterwards, so signing in on the way to connecting
+  // Claude (#249) lands on the consent screen, not on Today.
+  const here = (() => {
+    const search = new URLSearchParams(window.location.search);
+    search.delete('sso');
+    const rest = search.toString();
+    return `${window.location.pathname}${rest ? `?${rest}` : ''}`;
+  })();
 
   const set = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
 
@@ -142,7 +150,7 @@ export default function Login() {
                     {/* A real link, not a fetch: the browser has to leave for
                         the provider and come back holding a cookie, which
                         XHR cannot do. */}
-                    <a href={`/api/auth/oauth/${p.id}/start`}>
+                    <a href={`/api/auth/oauth/${p.id}/start${here === '/' ? '' : `?next=${encodeURIComponent(here)}`}`}>
                       {MARK[p.id]} Continue with {p.label}
                     </a>
                   </Button>

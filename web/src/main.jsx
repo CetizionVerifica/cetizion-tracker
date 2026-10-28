@@ -11,6 +11,7 @@ import AcceptQuotation from './pages/AcceptQuotation.jsx';
 import Portal from './pages/Portal.jsx';
 import FillQuestionnaire from './pages/FillQuestionnaire.jsx';
 import SuperAdmin from './pages/SuperAdmin.jsx';
+import OAuthConsent from './pages/OAuthConsent.jsx';
 import { startErrorReporting } from './lib/errorReporting.js';
 import { EnvironmentBanner } from './components/EnvironmentBanner.jsx';
 
@@ -24,6 +25,8 @@ const questionnaireToken = window.location.pathname.match(/^\/q\/([A-Za-z0-9_-]+
 const portalPath = window.location.pathname.match(/^\/portal(?:\/login\/([A-Za-z0-9_-]+))?\/?$/);
 // The super admin portal manages accounts, with its own sign-in (server/src/auth/superAdmin.js).
 const superAdminPath = /^\/super-admin\/?$/.test(window.location.pathname);
+// Connecting Claude to the tracker (#249): its own page, after the normal sign-in.
+const consentPath = /^\/oauth\/consent\/?$/.test(window.location.pathname);
 
 // Outside the app's own root, so every page shows it, the client-facing ones included.
 const bannerRoot = document.createElement('div');
@@ -50,6 +53,7 @@ createRoot(document.getElementById('root')).render(
   questionnaireToken ? <React.StrictMode><Theme forced="dark"><FillQuestionnaire token={questionnaireToken} /></Theme></React.StrictMode> :
   portalPath ? <Theme forced="dark"><Portal loginToken={portalPath[1]} /></Theme> :
   superAdminPath ? <React.StrictMode><Theme><ToastProvider><SuperAdmin /></ToastProvider></Theme></React.StrictMode> :
+  consentPath ? <React.StrictMode><Theme><BrowserRouter><ToastProvider><AuthProvider><AuthGate><OAuthConsent /></AuthGate></AuthProvider></ToastProvider></BrowserRouter></Theme></React.StrictMode> :
   <React.StrictMode>
     <Theme>
       <BrowserRouter>

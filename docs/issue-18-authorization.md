@@ -102,17 +102,18 @@ arrangement exists to prevent.
 | Public route | Authenticated? | What is checked |
 | --- | :--: | --- |
 | `GET /api/public/accept/:token`<br>`GET /api/public/accept/:token/pdf`<br>`POST /api/public/accept/:token/accept`<br>`POST /api/public/accept/:token/changes` | **yes** | A 40-60 character random token from the emailed link, SHA-256 hashed and matched against quotation_acceptances.token_hash, with expiry, revision and status checked on every use. |
-| `POST /api/mcp` | **yes** | An Authorization: Bearer ctz_... token, SHA-256 hashed and matched against a non-revoked api_tokens row, which also carries the role and person the token may see. |
+| `POST /api/mcp` | **yes** | An Authorization: Bearer token: either ctz_..., SHA-256 hashed and matched against a non-revoked api_tokens row, which also carries the role and person the token may see; or a ctzo_... access token from the connector sign-in (#249), hashed and matched against an unexpired, unrevoked oauth_tokens row for this resource whose grant stands and whose users row is active, the role and name read from that row on every call. |
 | `POST /api/mail/notifications` | **yes** | Each notification must carry the clientState secret stored on the matching mail_folders subscription row; anything else is dropped. |
 | `POST /api/hooks/enquiries` | **yes** | An x-cetizion-signature header of the form t=<unix seconds>,v1=<HMAC-SHA256 of "t.body" under INCOMING_WEBHOOK_SECRET>, compared in constant time over the raw body, with timestamps more than five minutes old refused so a captured call cannot be replayed; the route is 404 unless the secret is set and the feature is switched on in Settings. |
 | `GET /metrics` | **yes** | Either a constant-time match against METRICS_TOKEN, or a staff session re-read from the database whose role is still admin. |
-| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`GET /api/auth/oauth/:provider/start`<br>`POST /api/portal/request-link`<br>`POST /api/super-admin/logout`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
+| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`GET /api/auth/oauth/:provider/start`<br>`POST /api/portal/request-link`<br>`POST /api/super-admin/logout`<br>`GET /api/mcp`<br>`DELETE /api/mcp`<br>`GET /.well-known/oauth-protected-resource`<br>`GET /.well-known/oauth-protected-resource/api/mcp`<br>`GET /.well-known/oauth-authorization-server`<br>`GET /.well-known/openid-configuration`<br>`OPTIONS /api/oauth/register`<br>`OPTIONS /api/oauth/token`<br>`OPTIONS /api/oauth/revoke`<br>`POST /api/oauth/register`<br>`GET /api/oauth/authorize` | no | Deliberately open. Nothing identifies the caller. |
+| `POST /api/oauth/token`<br>`POST /api/oauth/revoke` | **yes** | A registered client_id (with its secret, SHA-256 hashed and compared in constant time, for a confidential client) plus the grant itself: a single-use, ten-minute authorization code whose PKCE S256 verifier must hash to the challenge the person approved, or an unexpired refresh token that is replaced on every use, a reused one revoking the whole grant. |
 | `GET /api/auth/oauth/:provider/callback` | **yes** | The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued. |
 | `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
 | `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/files/invoice/:id`<br>`GET /api/portal/files/po/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages`<br>`GET /api/portal/actions`<br>`POST /api/portal/actions`<br>`POST /api/portal/documents`<br>`DELETE /api/portal/documents/:id` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
 | `GET /api/public/questionnaire/:token`<br>`PUT /api/public/questionnaire/:token/answers`<br>`POST /api/public/questionnaire/:token/files`<br>`POST /api/public/questionnaire/:token/submit` | **yes** | A 40-60 character random token from the emailed or copied link, SHA-256 hashed and matched against questionnaire_links.token_hash, with expiry, revoke and the status of the response checked on every use. |
 | `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
-| `GET /api/auth/me` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
+| `GET /api/auth/me`<br>`GET /api/oauth/requests/:id`<br>`POST /api/oauth/requests/:id`<br>`GET /api/oauth/grants`<br>`DELETE /api/oauth/grants/:id` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
 | `POST /api/super-admin/login` | **yes** | An email and password checked in constant time against SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD (plain or a scrypt hash) in the environment; the route is 404 while either is blank. |
 | `GET /api/super-admin/me`<br>`GET /api/super-admin/users`<br>`POST /api/super-admin/users`<br>`PATCH /api/super-admin/users/:id`<br>`POST /api/super-admin/users/:id/password`<br>`GET /api/super-admin/users/:id/deletion-plan`<br>`DELETE /api/super-admin/users/:id`<br>`GET /api/super-admin/deleted-users`<br>`GET /api/super-admin/deleted-users/:id/backup` | **yes** | The signed cetizion_super_admin cookie (a key derived from SESSION_SECRET, distinct from the staff and portal ones), unexpired and naming the SUPER_ADMIN_EMAIL currently in the environment. |
 | `GET /{*splat}` | no | The built single-page app: HTML, CSS and JavaScript with no data in it. Everything it displays it fetches from /api, which is gated. |
@@ -343,6 +344,18 @@ session is **401**, before any of these is considered.
 | `POST /api/notifications/read-all` | any | Scoped: record-owner. |
 | `GET /api/notifications/summary` | any | Scoped: record-owner. |
 | `POST /api/notifications/sweep` | **admin** | The same work as the notifications.daily job. Running a job by hand is operational. |
+| **/api/oauth** | | |
+| `GET /api/oauth/authorize` | public | none — Checks the client, redirect and PKCE challenge, records the request and sends the browser to the consent screen, which needs a session. It issues nothing and reads no record. |
+| `GET /api/oauth/grants` | public | staff-session-optional — Connected apps: your own connections; an administrator may list everybody's. Runs requireAuth itself. |
+| `DELETE /api/oauth/grants/:id` | public | staff-session-optional — Disconnect: your own connection, or anybody's for an administrator. Runs requireAuth itself. |
+| `OPTIONS /api/oauth/register` | public | none — A CORS preflight for browser-based MCP clients. It answers headers only. |
+| `POST /api/oauth/register` | public | none — Dynamic client registration (RFC 7591), which claude.ai needs to add a connector. Registering grants nothing: redirect URIs must be Claude's callbacks or a loopback address, and every token still needs a signed-in person to approve it. Rate limited per address. |
+| `GET /api/oauth/requests/:id` | public | staff-session-optional — The consent screen: what is asking for access. Mounted with the OAuth routes, outside requireAuth, but it runs requireAuth itself. |
+| `POST /api/oauth/requests/:id` | public | staff-session-optional — Allow or deny on the consent screen. The grant is the signed-in person's own, never wider than their role; HR and roles closed in Settings are refused. |
+| `OPTIONS /api/oauth/revoke` | public | none — A CORS preflight for browser-based MCP clients. It answers headers only. |
+| `POST /api/oauth/revoke` | public | oauth-client — A client gives up its own token (RFC 7009); it can name only tokens issued to it. |
+| `OPTIONS /api/oauth/token` | public | none — A CORS preflight for browser-based MCP clients. It answers headers only. |
+| `POST /api/oauth/token` | public | oauth-client — Exchanges an approved code or a refresh token for tokens. The client is not a signed-in browser; the code or refresh token is the credential. |
 | **/api/owners** | | |
 | `GET /api/owners/duplicates` | **admin** | Counts the records behind every Owner spelling across the whole book, not only the caller's own. |
 | `POST /api/owners/merge` | **admin** | Rewrites the Owner on every record carrying the merged spellings and fills in their owner. It cannot be undone from the UI. |
@@ -524,6 +537,10 @@ session is **401**, before any of these is considered.
 | **/metrics** | | |
 | `GET /metrics` | public | metrics-token-or-admin-session — Mounted outside /api so a scraper can reach it with a bearer token, but it refuses anyone who is neither the token holder nor a current administrator. |
 | **the web app** | | |
+| `GET /.well-known/oauth-authorization-server` | public | none — RFC 8414 discovery: where to register, authorize and get tokens. A fixed document; it reads no record. |
+| `GET /.well-known/oauth-protected-resource` | public | none — RFC 9728 discovery: which server signs people in for /api/mcp. A fixed document built from the tracker's own public address; it reads no record. |
+| `GET /.well-known/oauth-protected-resource/api/mcp` | public | none — The same discovery document at the path-specific address RFC 9728 names for /api/mcp. |
+| `GET /.well-known/openid-configuration` | public | none — The same discovery document, for clients that look for OpenID discovery first. |
 | `GET /{*splat}` | public | web-app-shell — The built single-page app is static files with no data in them; every figure it shows it fetches from /api, which is gated. |
 <!-- /generated:routes -->
 

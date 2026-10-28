@@ -1,8 +1,10 @@
 /**
  * The MCP server (#50): Claude Code, Claude Desktop and other MCP clients
- * can read the tracker and add a few guarded notes, with an API token.
+ * can read the tracker and add a few guarded notes, with an API token — or,
+ * from claude.ai, with the person's own sign-in through OAuth (#249,
+ * routes/oauth.js).
  *
- *   POST /api/mcp          Streamable HTTP, stateless; Authorization: Bearer <token>
+ *   POST /api/mcp          Streamable HTTP, stateless; Authorization: Bearer <ctz_ token or ctzo_ access token>
  *
  * Staff side (signed in):
  *   GET    /api/api-tokens               tokens (never their values) and recent calls
@@ -26,6 +28,7 @@ import * as imports from '../lib/mcp/imports.js';
 import * as agg from '../lib/mcp/aggregate.js';
 import * as money from '../lib/mcp/money.js';
 import * as records from '../lib/mcp/records.js';
+import * as oauth from '../lib/mcp/oauth.js';
 
 export const mcpRouter = Router();
 export const apiTokenRouter = Router();
@@ -34,13 +37,21 @@ const hash = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const ENTITY = z.enum(['company', 'quotation', 'enquiry', 'project', 'purchase_order']);
 const DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
 
+/**
+ * Who is calling: an API token an admin issued (`ctz_`), or an access token
+ * from the claude.ai connector's sign-in (`ctzo_`, #249). Both come back in
+ * the shape buildServer() reads: role, person, can_write, and a name for the
+ * "(via MCP)" stamp.
+ */
 async function authenticate(req) {
-  const m = String(req.get('authorization') || '').match(/^Bearer\s+(ctz_[A-Za-z0-9_-]{30,80})$/);
-  if (!m) return null;
-  const { rows: [t] } = await query('SELECT * FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL', [hash(m[1])]);
+  const bearer = String(req.get('authorization') || '').match(/^Bearer\s+(\S+)$/)?.[1];
+  if (!bearer) return null;
+  if (oauth.isAccessToken(bearer)) return oauth.verifyAccessToken(bearer);
+  if (!/^ctz_[A-Za-z0-9_-]{30,80}$/.test(bearer)) return null;
+  const { rows: [t] } = await query('SELECT * FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL', [hash(bearer)]);
   if (!t) return null;
   query('UPDATE api_tokens SET last_used_at = now() WHERE id = $1', [t.id]).catch(() => {});
-  return t;
+  return { ...t, kind: 'api' };
 }
 
 function buildServer(token) {
@@ -82,10 +93,10 @@ function buildServer(token) {
     server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: z.looseObject(out) } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
       try {
         const result = await fn(args);
-        await query('INSERT INTO api_token_log (token_id, tool, arguments, ok) VALUES ($1,$2,$3,true)', [token.id, name, JSON.stringify(args)]);
+        await query('INSERT INTO api_token_log (token_id, grant_id, tool, arguments, ok) VALUES ($1,$2,$3,$4,true)', [token.id, token.grant_id ?? null, name, JSON.stringify(args)]);
         return result;
       } catch (err) {
-        await query('INSERT INTO api_token_log (token_id, tool, arguments, ok, error) VALUES ($1,$2,$3,false,$4)', [token.id, name, JSON.stringify(args), String(err.message).slice(0, 500)]);
+        await query('INSERT INTO api_token_log (token_id, grant_id, tool, arguments, ok, error) VALUES ($1,$2,$3,$4,false,$5)', [token.id, token.grant_id ?? null, name, JSON.stringify(args), String(err.message).slice(0, 500)]);
         // What the caller is told is either something they can act on or
         // nothing at all. A raw Postgres error names columns, constraints
         // and values, and the token log is readable by every signed-in
@@ -364,8 +375,11 @@ mcpRouter.use(rateLimit({
 mcpRouter.post('/', async (req, res) => {
   const token = await authenticate(req);
   if (!token) {
-    res.set('WWW-Authenticate', 'Bearer realm="cetizion-tracker"');
-    return res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'A valid API token is required' }, id: null });
+    // resource_metadata is where an OAuth client such as claude.ai starts
+    // (RFC 9728): it reads which server signs people in, and goes there.
+    const site = await oauth.siteOrigin();
+    res.set('WWW-Authenticate', `Bearer realm="cetizion-tracker"${site ? `, resource_metadata="${oauth.protectedResourceMetadataUrl(site)}"` : ''}`);
+    return res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'A valid API token or sign-in is required' }, id: null });
   }
   const server = buildServer(token);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -391,8 +405,17 @@ apiTokenRouter.get('/', async (req, res) => {
     `SELECT t.id, t.name, t.token_prefix, t.role, t.can_write, t.person, t.created_by, t.created_at, t.last_used_at, t.revoked_at,
             (SELECT COUNT(*)::int FROM api_token_log l WHERE l.token_id = t.id) AS calls
        FROM api_tokens t ORDER BY t.revoked_at IS NOT NULL, t.created_at DESC`);
+  // A connector call is named for the person and the app, since it has no
+  // token name of its own (#249).
   const { rows: log } = await query(
-    `SELECT l.created_at, l.tool, l.ok, l.error, t.name FROM api_token_log l JOIN api_tokens t ON t.id = l.token_id ORDER BY l.id DESC LIMIT 100`);
+    `SELECT l.created_at, l.tool, l.ok, l.error,
+            COALESCE(t.name, u.name || ' · ' || COALESCE(c.client_name, 'connector')) AS name
+       FROM api_token_log l
+       LEFT JOIN api_tokens t ON t.id = l.token_id
+       LEFT JOIN oauth_grants g ON g.id = l.grant_id
+       LEFT JOIN users u ON u.id = g.user_id
+       LEFT JOIN oauth_clients c ON c.client_id = g.client_id
+      ORDER BY l.id DESC LIMIT 100`);
   res.json({ data: rows, log });
 });
 
