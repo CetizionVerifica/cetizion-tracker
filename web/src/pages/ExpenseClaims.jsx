@@ -49,7 +49,7 @@ export default function ExpenseClaims() {
   ];
 
   const fields = [
-    { name: 'claim_id', label: 'Claim ID', required: true, hint: 'e.g. CLM-2026-002' },
+    { name: 'claim_id', label: 'Claim ID', auto: 'claim' },
     { name: 'travel_id', label: 'Trip', required: true, type: 'select', options: lookups.trips.map((t) => ({ value: t.travel_id, label: `${t.travel_id} — ${t.employee_name}${t.destination ? ` (${t.destination})` : ''}` })) },
     { name: 'expense_category', label: 'Category', type: 'select', options: lookups.expense_categories },
     { name: 'claim_month', label: 'Claim month', placeholder: 'Jul-2026' },
