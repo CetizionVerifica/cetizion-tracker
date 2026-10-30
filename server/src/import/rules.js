@@ -355,6 +355,8 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
     invoice_note: invRef.note,
     invoice_amount: invAmt.amount,
     received: received.amount,
+    // Kept only to warn: money received is never grossed up (it is what came in).
+    received_excl_gst: received.excl_gst || null,
     pending: pending.amount,
     follow_up: str(get('follow_up')),
     remarks: str(get('remarks')),
@@ -772,6 +774,14 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       if (r.received) {
         const rec = push({ step: 'receipt', source_row: r.sno, parent_seq: stageItems[0].seq, payload: { po_number: r.po_number, stage_no: 1, amount_received: r.received, payment_received_date: null } });
         if (liveFirst && Number(liveFirst.amount_received) > 0) duplicate(rec, `${liveFirst.amount_received} received on ${r.po_number} stage 1`, 'PO number and stage');
+        // A receipt is money that came in, so it is stored as read; a sheet
+        // calling it "excluding GST" means the stage will look short by the tax.
+        // An export (non-INR) receipt is zero-rated: there is no GST to be short of.
+        if (r.received_excl_gst && (r.currency || rules.default_currency) === 'INR') {
+          const excl = r.received_excl_gst;
+          const where = excl.from === 'cell' ? `"${excl.cell}"` : `the column "${excl.header}"`;
+          rec.flags.push({ level: 'warn', code: 'received_excl_gst', message: `Sheet says the amount received excludes GST (${where}); stored as read, ${inr(r.received)}. Confirm with finance what was actually received`, by: 'rule' });
+        }
         const stageAmount = r.po_amount * split[0].stage_percent;
         // Remarks say "X% adv" but the money received is nowhere near X% of
         // the PO (allowing for GST on top and TDS off): the figures disagree.

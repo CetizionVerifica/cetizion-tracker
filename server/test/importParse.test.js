@@ -336,6 +336,27 @@ test('a header that says the amount excludes GST: INR is stored with GST added, 
   assert.ok(q.flags.some((f) => f.code === 'amount_excl_gst'));
 });
 
+test('money received "excluding GST" is stored as read, never grossed up, and the receipt says so', () => {
+  const plan = (receivedHeader, receivedCell) => {
+    const mapping = { client: 'Client', stage: 'Stage', service: 'Service', po_number: 'PO', po_amount: 'PO Amount', invoice_number: 'Invoice', received: receivedHeader };
+    const rows = [{ __row: 2, Client: 'Hetero', Stage: 'Won - PO Received', Service: 'ASI audit', PO: 'PO-1', 'PO Amount': 118000, Invoice: 'CVPL/26/1', [receivedHeader]: receivedCell }];
+    return buildPlan({ rows, mapping, live: gstLive }).items.find((it) => it.step === 'receipt');
+  };
+  const byHeader = plan('Received (excl. GST)', 50000);
+  assert.equal(byHeader.payload.amount_received, 50000, 'what came in is what is stored');
+  assert.match(byHeader.flags.find((f) => f.code === 'received_excl_gst').message, /the column "Received \(excl\. GST\)".*stored as read, 50,000/);
+  // The header said it, not the cell: the cell is not quoted as if it did.
+  const plainCell = plan('Received (excl. GST)', 'Rs 50,000/-');
+  assert.match(plainCell.flags.find((f) => f.code === 'received_excl_gst').message, /the column "Received \(excl\. GST\)"/);
+  const byCell = plan('Received', '50,000 + GST');
+  assert.equal(byCell.payload.amount_received, 50000);
+  assert.match(byCell.flags.find((f) => f.code === 'received_excl_gst').message, /"50,000 \+ GST"/);
+  // An export receipt is zero-rated: no GST to warn about.
+  assert.ok(!plan('Received', 'USD 5,000 + GST').flags.some((f) => f.code === 'received_excl_gst'));
+  // Nothing said about GST: no warning.
+  assert.ok(!plan('Received', 50000).flags.some((f) => f.code === 'received_excl_gst'));
+});
+
 test('a cell written "8,111 + GST" in rupees is grossed up, not read as the inclusive value', () => {
   const { q, po } = gstPlan('PO Amount', '8,111 + GST');
   assert.equal(po.payload.po_value, 9570.98);
