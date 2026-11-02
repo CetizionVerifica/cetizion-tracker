@@ -1,0 +1,2575 @@
+{
+  "within the state, two GST rates, every optional field": {
+    "pageSize": "A4",
+    "pageMargins": [
+      42,
+      48,
+      42,
+      56
+    ],
+    "defaultStyle": {
+      "font": "Roboto",
+      "fontSize": 9.5,
+      "color": "#0f172a",
+      "lineHeight": 1.25
+    },
+    "content": [
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "Example Verifica Pvt Ltd",
+                "fontSize": 16,
+                "bold": true,
+                "color": "#0f766e"
+              },
+              {
+                "text": "1 Sample Road, Pune",
+                "color": "#64748b",
+                "fontSize": 8.5
+              },
+              {
+                "text": "GSTIN 27AAAAA0000A1Z5",
+                "color": "#64748b",
+                "fontSize": 8.5
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "QUOTATION",
+                "fontSize": 14,
+                "bold": true,
+                "alignment": "right"
+              },
+              {
+                "text": "CTZ/QT/2026/901",
+                "alignment": "right",
+                "bold": true
+              },
+              {
+                "text": "Revision 2",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "Date: 05 Oct 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "Valid until: 04 Nov 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      },
+      {
+        "canvas": [
+          {
+            "type": "line",
+            "x1": 0,
+            "y1": 8,
+            "x2": 511,
+            "y2": 8,
+            "lineWidth": 1,
+            "lineColor": "#e2e8f0"
+          }
+        ],
+        "margin": [
+          0,
+          4,
+          0,
+          12
+        ]
+      },
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "To",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Sample Steel Ltd",
+                "bold": true
+              },
+              {
+                "text": "A. Tester"
+              },
+              {
+                "text": "tester@example.com",
+                "color": "#64748b"
+              },
+              {
+                "text": "9 Test Street, Mumbai",
+                "color": "#64748b"
+              },
+              {
+                "text": "GSTIN 27BBBBB1111B1Z6",
+                "color": "#64748b"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "Subject",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "ISO 9001 audit",
+                "bold": true
+              },
+              {
+                "text": "Place of supply: Maharashtra",
+                "color": "#64748b"
+              },
+              {
+                "text": "Prepared by B. Seller",
+                "color": "#64748b"
+              }
+            ],
+            "width": 220
+          }
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          16
+        ]
+      },
+      {
+        "table": {
+          "headerRows": 1,
+          "widths": [
+            16,
+            "*",
+            44,
+            70,
+            34,
+            34,
+            80
+          ],
+          "body": [
+            [
+              {
+                "text": "#",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Description",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Qty",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Rate",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Disc.",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "GST",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Amount",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "1",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Stage 1 audit"
+                  },
+                  {
+                    "text": "ISO audits",
+                    "color": "#64748b",
+                    "fontSize": 8
+                  },
+                  {
+                    "text": "SAC 998311",
+                    "color": "#64748b",
+                    "fontSize": 8
+                  }
+                ]
+              },
+              {
+                "text": "2.5 day",
+                "alignment": "right"
+              },
+              {
+                "text": "₹25,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "10%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "18%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹56,250.00",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "2",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Training"
+                  }
+                ]
+              },
+              {
+                "text": "1 session",
+                "alignment": "right"
+              },
+              {
+                "text": "₹10,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "5%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹10,000.00",
+                "alignment": "right"
+              }
+            ]
+          ]
+        },
+        "layout": {
+          "hLineWidth": [
+            0,
+            0.5,
+            0.5,
+            0
+          ],
+          "vLineWidth": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "hLineColor": [
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0"
+          ],
+          "paddingTop": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "paddingBottom": [
+            5,
+            5,
+            5,
+            5
+          ]
+        }
+      },
+      {
+        "columns": [
+          {
+            "width": "*",
+            "text": ""
+          },
+          {
+            "width": 220,
+            "table": {
+              "widths": [
+                "*",
+                90
+              ],
+              "body": [
+                [
+                  {
+                    "text": "Subtotal",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹66,250.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "CGST @ 9%",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹5,062.50",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "SGST @ 9%",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹5,062.50",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "CGST @ 2.5%",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹250.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "SGST @ 2.5%",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹250.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "Total",
+                    "bold": true,
+                    "alignment": "right",
+                    "color": "#0f172a"
+                  },
+                  {
+                    "text": "₹76,875.00",
+                    "bold": true,
+                    "alignment": "right"
+                  }
+                ]
+              ]
+            },
+            "layout": {
+              "hLineWidth": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0
+              ],
+              "vLineWidth": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              "hLineColor": [
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a"
+              ],
+              "paddingTop": [
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3
+              ],
+              "paddingBottom": [
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3
+              ]
+            },
+            "margin": [
+              0,
+              10,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "stack": [
+          {
+            "text": "Terms",
+            "bold": true,
+            "margin": [
+              0,
+              18,
+              0,
+              4
+            ]
+          },
+          {
+            "text": "Payable in 30 days.",
+            "color": "#0f172a"
+          }
+        ]
+      },
+      {
+        "text": "We look forward to working with you.",
+        "margin": [
+          0,
+          18,
+          0,
+          0
+        ]
+      },
+      {
+        "columns": [
+          {
+            "text": ""
+          },
+          {
+            "stack": [
+              {
+                "text": "For Example Verifica Pvt Ltd",
+                "color": "#64748b",
+                "fontSize": 8,
+                "margin": [
+                  0,
+                  28,
+                  0,
+                  20
+                ]
+              },
+              {
+                "text": "B. Seller"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/901 · Rev 2",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 1 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      },
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/901 · Rev 2",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 2 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      }
+    ]
+  },
+  "outside the state": {
+    "pageSize": "A4",
+    "pageMargins": [
+      42,
+      48,
+      42,
+      56
+    ],
+    "defaultStyle": {
+      "font": "Roboto",
+      "fontSize": 9.5,
+      "color": "#0f172a",
+      "lineHeight": 1.25
+    },
+    "content": [
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "Example Verifica Pvt Ltd",
+                "fontSize": 16,
+                "bold": true,
+                "color": "#0f766e"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "QUOTATION",
+                "fontSize": 14,
+                "bold": true,
+                "alignment": "right"
+              },
+              {
+                "text": "CTZ/QT/2026/902",
+                "alignment": "right",
+                "bold": true
+              },
+              {
+                "text": "Date: 06 Oct 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      },
+      {
+        "canvas": [
+          {
+            "type": "line",
+            "x1": 0,
+            "y1": 8,
+            "x2": 511,
+            "y2": 8,
+            "lineWidth": 1,
+            "lineColor": "#e2e8f0"
+          }
+        ],
+        "margin": [
+          0,
+          4,
+          0,
+          12
+        ]
+      },
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "To",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Sample Foods Ltd",
+                "bold": true
+              },
+              {
+                "text": "C. Tester"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "Subject",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Ecovadis",
+                "bold": true
+              },
+              {
+                "text": "Place of supply: Karnataka",
+                "color": "#64748b"
+              }
+            ],
+            "width": 220
+          }
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          16
+        ]
+      },
+      {
+        "table": {
+          "headerRows": 1,
+          "widths": [
+            16,
+            "*",
+            44,
+            70,
+            34,
+            34,
+            80
+          ],
+          "body": [
+            [
+              {
+                "text": "#",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Description",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Qty",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Rate",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Disc.",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "GST",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Amount",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "1",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Assessment support"
+                  }
+                ]
+              },
+              {
+                "text": "1 day",
+                "alignment": "right"
+              },
+              {
+                "text": "₹3,50,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "18%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹3,50,000.00",
+                "alignment": "right"
+              }
+            ]
+          ]
+        },
+        "layout": {
+          "hLineWidth": [
+            0,
+            0.5,
+            0
+          ],
+          "vLineWidth": [
+            0,
+            0,
+            0
+          ],
+          "hLineColor": [
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0"
+          ],
+          "paddingTop": [
+            5,
+            5,
+            5
+          ],
+          "paddingBottom": [
+            5,
+            5,
+            5
+          ]
+        }
+      },
+      {
+        "columns": [
+          {
+            "width": "*",
+            "text": ""
+          },
+          {
+            "width": 220,
+            "table": {
+              "widths": [
+                "*",
+                90
+              ],
+              "body": [
+                [
+                  {
+                    "text": "Subtotal",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹3,50,000.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "IGST @ 18%",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹63,000.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "Total",
+                    "bold": true,
+                    "alignment": "right",
+                    "color": "#0f172a"
+                  },
+                  {
+                    "text": "₹4,13,000.00",
+                    "bold": true,
+                    "alignment": "right"
+                  }
+                ]
+              ]
+            },
+            "layout": {
+              "hLineWidth": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "vLineWidth": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "hLineColor": [
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a"
+              ],
+              "paddingTop": [
+                3,
+                3,
+                3,
+                3
+              ],
+              "paddingBottom": [
+                3,
+                3,
+                3,
+                3
+              ]
+            },
+            "margin": [
+              0,
+              10,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "text": "We look forward to working with you.",
+        "margin": [
+          0,
+          18,
+          0,
+          0
+        ]
+      },
+      {
+        "columns": [
+          {
+            "text": ""
+          },
+          {
+            "stack": [
+              {
+                "text": "For Example Verifica Pvt Ltd",
+                "color": "#64748b",
+                "fontSize": 8,
+                "margin": [
+                  0,
+                  28,
+                  0,
+                  20
+                ]
+              },
+              {
+                "text": "Authorised signatory"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/902",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 1 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      },
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/902",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 2 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      }
+    ]
+  },
+  "an export, zero-rated whatever rate the line carries": {
+    "pageSize": "A4",
+    "pageMargins": [
+      42,
+      48,
+      42,
+      56
+    ],
+    "defaultStyle": {
+      "font": "Roboto",
+      "fontSize": 9.5,
+      "color": "#0f172a",
+      "lineHeight": 1.25
+    },
+    "content": [
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "Cetizion Verifica",
+                "fontSize": 16,
+                "bold": true,
+                "color": "#0f766e"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "QUOTATION",
+                "fontSize": 14,
+                "bold": true,
+                "alignment": "right"
+              },
+              {
+                "text": "CTZ/QT/2026/903",
+                "alignment": "right",
+                "bold": true
+              },
+              {
+                "text": "Date: 07 Oct 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      },
+      {
+        "canvas": [
+          {
+            "type": "line",
+            "x1": 0,
+            "y1": 8,
+            "x2": 511,
+            "y2": 8,
+            "lineWidth": 1,
+            "lineColor": "#e2e8f0"
+          }
+        ],
+        "margin": [
+          0,
+          4,
+          0,
+          12
+        ]
+      },
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "To",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Sample Overseas Inc",
+                "bold": true
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "Subject",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Services",
+                "bold": true
+              }
+            ],
+            "width": 220
+          }
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          16
+        ]
+      },
+      {
+        "table": {
+          "headerRows": 1,
+          "widths": [
+            16,
+            "*",
+            44,
+            70,
+            34,
+            34,
+            80
+          ],
+          "body": [
+            [
+              {
+                "text": "#",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Description",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Qty",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Rate",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Disc.",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "GST",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Amount",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "1",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Remote audit"
+                  }
+                ]
+              },
+              {
+                "text": "1 day",
+                "alignment": "right"
+              },
+              {
+                "text": "$4,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "0%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "$4,000.00",
+                "alignment": "right"
+              }
+            ]
+          ]
+        },
+        "layout": {
+          "hLineWidth": [
+            0,
+            0.5,
+            0
+          ],
+          "vLineWidth": [
+            0,
+            0,
+            0
+          ],
+          "hLineColor": [
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0"
+          ],
+          "paddingTop": [
+            5,
+            5,
+            5
+          ],
+          "paddingBottom": [
+            5,
+            5,
+            5
+          ]
+        }
+      },
+      {
+        "columns": [
+          {
+            "width": "*",
+            "text": ""
+          },
+          {
+            "width": 220,
+            "table": {
+              "widths": [
+                "*",
+                90
+              ],
+              "body": [
+                [
+                  {
+                    "text": "Subtotal",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "$4,000.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "Zero-rated (export)",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "$0.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "Total",
+                    "bold": true,
+                    "alignment": "right",
+                    "color": "#0f172a"
+                  },
+                  {
+                    "text": "$4,000.00",
+                    "bold": true,
+                    "alignment": "right"
+                  }
+                ]
+              ]
+            },
+            "layout": {
+              "hLineWidth": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "vLineWidth": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "hLineColor": [
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a"
+              ],
+              "paddingTop": [
+                3,
+                3,
+                3,
+                3
+              ],
+              "paddingBottom": [
+                3,
+                3,
+                3,
+                3
+              ]
+            },
+            "margin": [
+              0,
+              10,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "text": "We look forward to working with you.",
+        "margin": [
+          0,
+          18,
+          0,
+          0
+        ]
+      },
+      {
+        "columns": [
+          {
+            "text": ""
+          },
+          {
+            "stack": [
+              {
+                "text": "For Cetizion Verifica",
+                "color": "#64748b",
+                "fontSize": 8,
+                "margin": [
+                  0,
+                  28,
+                  0,
+                  20
+                ]
+              },
+              {
+                "text": "Authorised signatory"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/903",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 1 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      },
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/903",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 2 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      }
+    ]
+  },
+  "an old revision with no GST split, one rate": {
+    "pageSize": "A4",
+    "pageMargins": [
+      42,
+      48,
+      42,
+      56
+    ],
+    "defaultStyle": {
+      "font": "Roboto",
+      "fontSize": 9.5,
+      "color": "#0f172a",
+      "lineHeight": 1.25
+    },
+    "content": [
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "Cetizion Verifica",
+                "fontSize": 16,
+                "bold": true,
+                "color": "#0f766e"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "QUOTATION",
+                "fontSize": 14,
+                "bold": true,
+                "alignment": "right"
+              },
+              {
+                "text": "CTZ/QT/2026/904",
+                "alignment": "right",
+                "bold": true
+              },
+              {
+                "text": "Revision 1",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "Date: 08 Oct 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      },
+      {
+        "canvas": [
+          {
+            "type": "line",
+            "x1": 0,
+            "y1": 8,
+            "x2": 511,
+            "y2": 8,
+            "lineWidth": 1,
+            "lineColor": "#e2e8f0"
+          }
+        ],
+        "margin": [
+          0,
+          4,
+          0,
+          12
+        ]
+      },
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "To",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Sample Textiles Ltd",
+                "bold": true
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "Subject",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Services",
+                "bold": true
+              }
+            ],
+            "width": 220
+          }
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          16
+        ]
+      },
+      {
+        "table": {
+          "headerRows": 1,
+          "widths": [
+            16,
+            "*",
+            44,
+            70,
+            34,
+            34,
+            80
+          ],
+          "body": [
+            [
+              {
+                "text": "#",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Description",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Qty",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Rate",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Disc.",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "GST",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Amount",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "1",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Certification audit"
+                  }
+                ]
+              },
+              {
+                "text": "1 day",
+                "alignment": "right"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "2.5%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "2",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Report"
+                  }
+                ]
+              },
+              {
+                "text": "1 day",
+                "alignment": "right"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "2.5%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              }
+            ]
+          ]
+        },
+        "layout": {
+          "hLineWidth": [
+            0,
+            0.5,
+            0.5,
+            0
+          ],
+          "vLineWidth": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "hLineColor": [
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0"
+          ],
+          "paddingTop": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "paddingBottom": [
+            5,
+            5,
+            5,
+            5
+          ]
+        }
+      },
+      {
+        "columns": [
+          {
+            "width": "*",
+            "text": ""
+          },
+          {
+            "width": 220,
+            "table": {
+              "widths": [
+                "*",
+                90
+              ],
+              "body": [
+                [
+                  {
+                    "text": "Subtotal",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹2,000.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "GST @ 2.5%",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹50.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "Total",
+                    "bold": true,
+                    "alignment": "right",
+                    "color": "#0f172a"
+                  },
+                  {
+                    "text": "₹2,050.00",
+                    "bold": true,
+                    "alignment": "right"
+                  }
+                ]
+              ]
+            },
+            "layout": {
+              "hLineWidth": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "vLineWidth": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "hLineColor": [
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a"
+              ],
+              "paddingTop": [
+                3,
+                3,
+                3,
+                3
+              ],
+              "paddingBottom": [
+                3,
+                3,
+                3,
+                3
+              ]
+            },
+            "margin": [
+              0,
+              10,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "text": "We look forward to working with you.",
+        "margin": [
+          0,
+          18,
+          0,
+          0
+        ]
+      },
+      {
+        "columns": [
+          {
+            "text": ""
+          },
+          {
+            "stack": [
+              {
+                "text": "For Cetizion Verifica",
+                "color": "#64748b",
+                "fontSize": 8,
+                "margin": [
+                  0,
+                  28,
+                  0,
+                  20
+                ]
+              },
+              {
+                "text": "Authorised signatory"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/904 · Rev 1",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 1 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      },
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/904 · Rev 1",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 2 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      }
+    ]
+  },
+  "an old revision with no GST split, mixed rates": {
+    "pageSize": "A4",
+    "pageMargins": [
+      42,
+      48,
+      42,
+      56
+    ],
+    "defaultStyle": {
+      "font": "Roboto",
+      "fontSize": 9.5,
+      "color": "#0f172a",
+      "lineHeight": 1.25
+    },
+    "content": [
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "Cetizion Verifica",
+                "fontSize": 16,
+                "bold": true,
+                "color": "#0f766e"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "QUOTATION",
+                "fontSize": 14,
+                "bold": true,
+                "alignment": "right"
+              },
+              {
+                "text": "CTZ/QT/2026/905",
+                "alignment": "right",
+                "bold": true
+              },
+              {
+                "text": "Date: 09 Oct 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      },
+      {
+        "canvas": [
+          {
+            "type": "line",
+            "x1": 0,
+            "y1": 8,
+            "x2": 511,
+            "y2": 8,
+            "lineWidth": 1,
+            "lineColor": "#e2e8f0"
+          }
+        ],
+        "margin": [
+          0,
+          4,
+          0,
+          12
+        ]
+      },
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "To",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Sample Paper Ltd",
+                "bold": true
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "Subject",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Services",
+                "bold": true
+              }
+            ],
+            "width": 220
+          }
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          16
+        ]
+      },
+      {
+        "table": {
+          "headerRows": 1,
+          "widths": [
+            16,
+            "*",
+            44,
+            70,
+            34,
+            34,
+            80
+          ],
+          "body": [
+            [
+              {
+                "text": "#",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Description",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "left"
+              },
+              {
+                "text": "Qty",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Rate",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Disc.",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "GST",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              },
+              {
+                "text": "Amount",
+                "bold": true,
+                "fontSize": 8,
+                "color": "#64748b",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "1",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Certification audit"
+                  }
+                ]
+              },
+              {
+                "text": "1 day",
+                "alignment": "right"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "18%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              }
+            ],
+            [
+              {
+                "text": "2",
+                "color": "#64748b"
+              },
+              {
+                "stack": [
+                  {
+                    "text": "Training"
+                  }
+                ]
+              },
+              {
+                "text": "1 day",
+                "alignment": "right"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              },
+              {
+                "text": "",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "5%",
+                "alignment": "right",
+                "color": "#64748b"
+              },
+              {
+                "text": "₹1,000.00",
+                "alignment": "right"
+              }
+            ]
+          ]
+        },
+        "layout": {
+          "hLineWidth": [
+            0,
+            0.5,
+            0.5,
+            0
+          ],
+          "vLineWidth": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "hLineColor": [
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0",
+            "#e2e8f0"
+          ],
+          "paddingTop": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "paddingBottom": [
+            5,
+            5,
+            5,
+            5
+          ]
+        }
+      },
+      {
+        "columns": [
+          {
+            "width": "*",
+            "text": ""
+          },
+          {
+            "width": 220,
+            "table": {
+              "widths": [
+                "*",
+                90
+              ],
+              "body": [
+                [
+                  {
+                    "text": "Subtotal",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹2,000.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "GST",
+                    "bold": false,
+                    "alignment": "right",
+                    "color": "#64748b"
+                  },
+                  {
+                    "text": "₹230.00",
+                    "bold": false,
+                    "alignment": "right"
+                  }
+                ],
+                [
+                  {
+                    "text": "Total",
+                    "bold": true,
+                    "alignment": "right",
+                    "color": "#0f172a"
+                  },
+                  {
+                    "text": "₹2,230.00",
+                    "bold": true,
+                    "alignment": "right"
+                  }
+                ]
+              ]
+            },
+            "layout": {
+              "hLineWidth": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "vLineWidth": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "hLineColor": [
+                "#0f172a",
+                "#0f172a",
+                "#0f172a",
+                "#0f172a"
+              ],
+              "paddingTop": [
+                3,
+                3,
+                3,
+                3
+              ],
+              "paddingBottom": [
+                3,
+                3,
+                3,
+                3
+              ]
+            },
+            "margin": [
+              0,
+              10,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "text": "We look forward to working with you.",
+        "margin": [
+          0,
+          18,
+          0,
+          0
+        ]
+      },
+      {
+        "columns": [
+          {
+            "text": ""
+          },
+          {
+            "stack": [
+              {
+                "text": "For Cetizion Verifica",
+                "color": "#64748b",
+                "fontSize": 8,
+                "margin": [
+                  0,
+                  28,
+                  0,
+                  20
+                ]
+              },
+              {
+                "text": "Authorised signatory"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/905",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 1 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      },
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/905",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 2 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      }
+    ]
+  },
+  "no lines, the quoted value only": {
+    "pageSize": "A4",
+    "pageMargins": [
+      42,
+      48,
+      42,
+      56
+    ],
+    "defaultStyle": {
+      "font": "Roboto",
+      "fontSize": 9.5,
+      "color": "#0f172a",
+      "lineHeight": 1.25
+    },
+    "content": [
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "Cetizion Verifica",
+                "fontSize": 16,
+                "bold": true,
+                "color": "#0f766e"
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "QUOTATION",
+                "fontSize": 14,
+                "bold": true,
+                "alignment": "right"
+              },
+              {
+                "text": "CTZ/QT/2026/906",
+                "alignment": "right",
+                "bold": true
+              },
+              {
+                "text": "Date: 10 Oct 2026",
+                "alignment": "right",
+                "color": "#64748b"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      },
+      {
+        "canvas": [
+          {
+            "type": "line",
+            "x1": 0,
+            "y1": 8,
+            "x2": 511,
+            "y2": 8,
+            "lineWidth": 1,
+            "lineColor": "#e2e8f0"
+          }
+        ],
+        "margin": [
+          0,
+          4,
+          0,
+          12
+        ]
+      },
+      {
+        "columns": [
+          {
+            "stack": [
+              {
+                "text": "To",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Sample Glass Ltd",
+                "bold": true
+              }
+            ]
+          },
+          {
+            "stack": [
+              {
+                "text": "Subject",
+                "color": "#64748b",
+                "fontSize": 8
+              },
+              {
+                "text": "Services",
+                "bold": true
+              }
+            ],
+            "width": 220
+          }
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          16
+        ]
+      },
+      {
+        "text": "Scope: as discussed",
+        "margin": [
+          0,
+          0,
+          0,
+          8
+        ]
+      },
+      {
+        "columns": [
+          {
+            "width": "*",
+            "text": ""
+          },
+          {
+            "width": 220,
+            "table": {
+              "widths": [
+                "*",
+                90
+              ],
+              "body": [
+                [
+                  {
+                    "text": "Quoted value",
+                    "bold": true,
+                    "alignment": "right",
+                    "color": "#0f172a"
+                  },
+                  {
+                    "text": "₹1,50,000.00",
+                    "bold": true,
+                    "alignment": "right"
+                  }
+                ]
+              ]
+            },
+            "layout": {
+              "hLineWidth": [
+                1,
+                0
+              ],
+              "vLineWidth": [
+                0,
+                0
+              ],
+              "hLineColor": [
+                "#0f172a",
+                "#0f172a"
+              ],
+              "paddingTop": [
+                3,
+                3
+              ],
+              "paddingBottom": [
+                3,
+                3
+              ]
+            },
+            "margin": [
+              0,
+              10,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "text": "We look forward to working with you.",
+        "margin": [
+          0,
+          18,
+          0,
+          0
+        ]
+      },
+      {
+        "columns": [
+          {
+            "text": ""
+          },
+          {
+            "stack": [
+              {
+                "text": "For Cetizion Verifica",
+                "color": "#64748b",
+                "fontSize": 8,
+                "margin": [
+                  0,
+                  28,
+                  0,
+                  20
+                ]
+              },
+              {
+                "text": "Authorised signatory"
+              }
+            ],
+            "width": 200
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/906",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 1 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      },
+      {
+        "margin": [
+          42,
+          16,
+          42,
+          0
+        ],
+        "columns": [
+          {
+            "text": "CTZ/QT/2026/906",
+            "color": "#64748b",
+            "fontSize": 8
+          },
+          {
+            "text": "Page 2 of 2",
+            "alignment": "right",
+            "color": "#64748b",
+            "fontSize": 8
+          }
+        ]
+      }
+    ]
+  }
+}

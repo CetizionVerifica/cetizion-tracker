@@ -16,32 +16,21 @@ const date = (d) => {
   return `${day} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m) - 1]} ${y}`;
 };
 
-/** The document definition, exported so a test can check it without rendering. */
 /** 18 -> "18", 2.5 -> "2.5"; half(18) -> "9" for the CGST and SGST halves. */
 const trim = (n) => String(Math.round(Number(n) * 100) / 100);
 const half = (n) => trim(Number(n) / 2);
 
-export function quotationDocument(q) {
-  const s = q.settings || {};
-  const cur = q.currency || 'INR';
-  const hasLines = q.lines?.length > 0;
-  // What an Indian quotation has to show: CGST and SGST within the state,
-  // IGST outside it, one band per rate. A single line called "GST" is not a
-  // document anybody can file against (#23). The split is worked out in
-  // fullQuotation; this only prints it, and falls back to the stored total
-  // for a quotation loaded without it (an old revision snapshot).
-  const gst = q.gst || null;
-  // An export (not in INR) is zero-rated: no GST on any line, whatever rate it carries.
-  const zeroRated = cur.toUpperCase() !== 'INR';
-  const taxRows = zeroRated ? [['Zero-rated (export)', money(0, cur)]] : gst && gst.bands?.length
-    ? gst.bands.flatMap((b) => (b.intra
-      ? [[`CGST @ ${half(b.rate)}%`, money(b.cgst, cur)], [`SGST @ ${half(b.rate)}%`, money(b.sgst, cur)]]
-      : [[`IGST @ ${trim(b.rate)}%`, money(b.igst, cur)]]))
-    : [[(() => {
-      const rates = [...new Set((q.lines || []).map((l) => Number(l.gst_rate)))];
-      return rates.length === 1 ? `GST @ ${trim(rates[0])}%` : 'GST';
-    })(), money(q.tax_total, cur)]];
-  const lineRows = (q.lines || []).map((l, i) => [
+const currencyOf = (q) => q.currency || 'INR';
+// An export (not in INR) is zero-rated: no GST on any line, whatever rate it carries.
+const isZeroRated = (q) => currencyOf(q).toUpperCase() !== 'INR';
+const hasLines = (q) => q.lines?.length > 0;
+
+/** The table of lines, or the scope sentence for a quotation that has none. */
+function linesTable(q) {
+  if (!hasLines(q)) return { text: `Scope: ${q.service_quoted || 'as discussed'}`, margin: [0, 0, 0, 8] };
+  const cur = currencyOf(q);
+  const zeroRated = isZeroRated(q);
+  const lineRows = q.lines.map((l, i) => [
     { text: String(i + 1), color: MUTED },
     { stack: [{ text: l.description }, l.service_name && l.service_name !== l.description ? { text: l.service_name, color: MUTED, fontSize: 8 } : null,
       l.sac_code ? { text: `SAC ${l.sac_code}`, color: MUTED, fontSize: 8 } : null].filter(Boolean) },
@@ -51,9 +40,54 @@ export function quotationDocument(q) {
     { text: `${zeroRated ? 0 : Number(l.gst_rate)}%`, alignment: 'right', color: MUTED },
     { text: money(l.amount, cur), alignment: 'right' },
   ]);
-  const totals = hasLines
-    ? [['Subtotal', money(q.subtotal, cur)], ...taxRows, ['Total', money(q.total, cur)]]
+  return {
+    table: {
+      headerRows: 1, widths: [16, '*', 44, 70, 34, 34, 80],
+      body: [
+        ['#', 'Description', 'Qty', 'Rate', 'Disc.', 'GST', 'Amount'].map((h, i) => ({ text: h, bold: true, fontSize: 8, color: MUTED, alignment: i >= 2 ? 'right' : 'left' })),
+        ...lineRows,
+      ],
+    },
+    layout: { hLineWidth: (i, node) => (i === 0 || i === node.table.body.length ? 0 : 0.5), vLineWidth: () => 0, hLineColor: () => LINE, paddingTop: () => 5, paddingBottom: () => 5 },
+  };
+}
+
+/**
+ * The GST rows of the totals. What an Indian quotation has to show: CGST and
+ * SGST within the state, IGST outside it, one band per rate. A single line
+ * called "GST" is not a document anybody can file against (#23). The split is
+ * worked out in fullQuotation; this only prints it, and falls back to the
+ * stored total for a quotation loaded without it (an old revision snapshot).
+ */
+function gstBands(q) {
+  const cur = currencyOf(q);
+  if (isZeroRated(q)) return [['Zero-rated (export)', money(0, cur)]];
+  if (q.gst?.bands?.length) {
+    return q.gst.bands.flatMap((b) => (b.intra
+      ? [[`CGST @ ${half(b.rate)}%`, money(b.cgst, cur)], [`SGST @ ${half(b.rate)}%`, money(b.sgst, cur)]]
+      : [[`IGST @ ${trim(b.rate)}%`, money(b.igst, cur)]]));
+  }
+  const rates = [...new Set(q.lines.map((l) => Number(l.gst_rate)))];
+  return [[rates.length === 1 ? `GST @ ${trim(rates[0])}%` : 'GST', money(q.tax_total, cur)]];
+}
+
+/** Subtotal, GST and total on the right, or the quoted value with no lines. */
+function totalsBlock(q) {
+  const cur = currencyOf(q);
+  const totals = hasLines(q)
+    ? [['Subtotal', money(q.subtotal, cur)], ...gstBands(q), ['Total', money(q.total, cur)]]
     : [['Quoted value', money(q.quotation_value, cur)]];
+  return { columns: [{ width: '*', text: '' }, {
+    width: 220,
+    table: { widths: ['*', 90], body: totals.map(([k, v], i) => [{ text: k, bold: i === totals.length - 1, alignment: 'right', color: i === totals.length - 1 ? INK : MUTED }, { text: v, bold: i === totals.length - 1, alignment: 'right' }]) },
+    layout: { hLineWidth: (i, node) => (i === node.table.body.length - 1 ? 1 : 0), vLineWidth: () => 0, hLineColor: () => INK, paddingTop: () => 3, paddingBottom: () => 3 },
+    margin: [0, 10, 0, 0],
+  }] };
+}
+
+/** The document definition, exported so a test can check it without rendering. */
+export function quotationDocument(q) {
+  const s = q.settings || {};
 
   return {
     pageSize: 'A4',
@@ -70,22 +104,8 @@ export function quotationDocument(q) {
         { stack: [{ text: 'To', color: MUTED, fontSize: 8 }, { text: q.client_name, bold: true }, q.contact?.name || q.contact_person ? { text: q.contact?.name || q.contact_person } : null, q.contact?.email ? { text: q.contact.email, color: MUTED } : null, q.company?.address ? { text: q.company.address, color: MUTED } : null, q.company?.gstin ? { text: `GSTIN ${q.company.gstin}`, color: MUTED } : null].filter(Boolean) },
         { stack: [{ text: 'Subject', color: MUTED, fontSize: 8 }, { text: q.service_quoted || 'Services', bold: true }, q.place_of_supply_state ? { text: `Place of supply: ${q.place_of_supply_state}`, color: MUTED } : null, q.sales_person ? { text: `Prepared by ${q.sales_person}`, color: MUTED } : null].filter(Boolean), width: 220 },
       ], margin: [0, 0, 0, 16] },
-      hasLines ? {
-        table: {
-          headerRows: 1, widths: [16, '*', 44, 70, 34, 34, 80],
-          body: [
-            ['#', 'Description', 'Qty', 'Rate', 'Disc.', 'GST', 'Amount'].map((h, i) => ({ text: h, bold: true, fontSize: 8, color: MUTED, alignment: i >= 2 ? 'right' : 'left' })),
-            ...lineRows,
-          ],
-        },
-        layout: { hLineWidth: (i, node) => (i === 0 || i === node.table.body.length ? 0 : 0.5), vLineWidth: () => 0, hLineColor: () => LINE, paddingTop: () => 5, paddingBottom: () => 5 },
-      } : { text: `Scope: ${q.service_quoted || 'as discussed'}`, margin: [0, 0, 0, 8] },
-      { columns: [{ width: '*', text: '' }, {
-        width: 220,
-        table: { widths: ['*', 90], body: totals.map(([k, v], i) => [{ text: k, bold: i === totals.length - 1, alignment: 'right', color: i === totals.length - 1 ? INK : MUTED }, { text: v, bold: i === totals.length - 1, alignment: 'right' }]) },
-        layout: { hLineWidth: (i, node) => (i === node.table.body.length - 1 ? 1 : 0), vLineWidth: () => 0, hLineColor: () => INK, paddingTop: () => 3, paddingBottom: () => 3 },
-        margin: [0, 10, 0, 0],
-      }] },
+      linesTable(q),
+      totalsBlock(q),
       q.terms ? { stack: [{ text: 'Terms', bold: true, margin: [0, 18, 0, 4] }, { text: q.terms, color: INK }] } : null,
       { text: 'We look forward to working with you.', margin: [0, 18, 0, 0] },
       { columns: [{ text: '' }, { stack: [{ text: `For ${s.company_name || 'Cetizion Verifica'}`, color: MUTED, fontSize: 8, margin: [0, 28, 0, 20] }, { text: q.sales_person || 'Authorised signatory' }], width: 200 }] },
