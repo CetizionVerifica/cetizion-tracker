@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { amountInText, checkExtraction, linesAddUp, near, parseAmount, parseRevision, rankPdfs } from '../src/lib/mailbox/pdfQuotation.js';
+import { quotationDocument } from '../src/lib/quotationPdf.js';
+import { pin, samples } from './fixtures/quotationDocumentSamples.js';
 
 /**
  * The checks a quotation read from a PDF must pass before it is created
@@ -117,3 +120,16 @@ test('pdfText reads 40 pages of a long PDF, where it used to stop at 10', async 
   assert.equal(pages.length, 40);
   assert.match(pages[39], /Page 40 of the schedule/);
 });
+
+// Our own quotation PDF with no design stays exactly as it was (#208, spec §6).
+const pinned = JSON.parse(readFileSync(new URL('./fixtures/quotationDocument.pinned.json', import.meta.url), 'utf8'));
+
+test('every pinned quotation document still has its sample', () => {
+  assert.deepEqual(Object.keys(pinned).sort(), Object.keys(samples).sort());
+});
+
+for (const [name, q] of Object.entries(samples)) {
+  test(`the quotation document with no design is unchanged: ${name}`, () => {
+    assert.deepEqual(pin(quotationDocument(q)), pinned[name]);
+  });
+}

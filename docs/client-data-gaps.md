@@ -289,7 +289,8 @@ text box), `city` and `notes` (`schema.sql:310-325`; form at
   - The place-of-supply fallback (`routes/quotations.js:49-53`,
     `lib/accounting/providers.js:33-35`).
   - The invoice run's Tax column.
-  - The address block on the quotation PDF (`lib/quotationPdf.js:68`).
+  - The address block on the quotation PDF (`quotationDocument` in
+    `lib/quotationPdf.js`).
   - The TDS report (`routes/accounting.js:203`).
 
 A shared accounts or reception inbox does not need a company column. Record
