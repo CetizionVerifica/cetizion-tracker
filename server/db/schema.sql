@@ -3907,6 +3907,10 @@ ALTER TABLE attachments ADD COLUMN IF NOT EXISTS doc_type text
 ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'sales' CHECK (kind IN ('sales','travel'));
 ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS vendor_id int REFERENCES travel_vendors(id);
 ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS source_file bytea;
+-- The admin's owner for each salesperson name on the sheet that matches no
+-- sales user exactly: normalised name -> users.id, or null for "leave
+-- unassigned" (104, import/owners.js).
+ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS owner_map jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE import_items DROP CONSTRAINT IF EXISTS import_items_step_check;
 ALTER TABLE import_items ADD CONSTRAINT import_items_step_check CHECK (step IN

@@ -17,6 +17,8 @@ import { transaction } from '../db.js';
 import { resources, ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { claimNextId } from '../lib/sequences.js';
 import { IMPORT_AUTHOR } from './rules.js';
+import { changeRecordOwner } from '../lib/ownershipHistory.js';
+import { ownerLookup } from './owners.js';
 
 const ORDER = ['quotation', 'project', 'purchase_order', 'service', 'stage', 'invoice', 'receipt'];
 
@@ -113,10 +115,45 @@ async function applyTracking(client, quotationNo, t) {
   return did;
 }
 
-export async function commitBatch(batch, items, { user }) {
+/**
+ * Give an unowned quotation or project its owner, through the same
+ * changeRecordOwner an explicit assignment uses, so it lands in
+ * ownership_history and the activity log.
+ *
+ * A record that already has an owner keeps it: an import never takes a deal
+ * away from somebody. Nor does it overrule an admin: a record that is
+ * unowned *and* has ownership history was unassigned on purpose, and stays
+ * so, the rule migrations 096 and 104 follow.
+ */
+const NATURAL_KEY = { quotations: 'quotation_no', projects: 'project_id' };
+async function giveOwner(client, table, key, current, owner, actor) {
+  if (!owner || current) return current ?? null;
+  const { rowCount: unassignedOnPurpose } = await client.query(
+    `SELECT 1 FROM ownership_history h JOIN ${table} r ON r.id = h.entity_id
+      WHERE h.entity_type = $1 AND r.${NATURAL_KEY[table]} = $2 LIMIT 1`, [table, String(key)]);
+  if (unassignedOnPurpose) return null;
+  await changeRecordOwner(client, {
+    entityType: table,
+    entityIdOrKey: String(key),
+    expectedOwnerId: null,
+    newOwnerId: owner,
+    reason: 'Owner set by the sheet import from the salesperson on the row',
+    actor,
+  });
+  return owner;
+}
+
+/**
+ * @param actor who to record as having set the owners: the Import screen
+ *              passes the signed-in admin; anything else is recorded as
+ *              the system, with `user` as the name in the activity log.
+ */
+export async function commitBatch(batch, items, { user, actor = { type: 'system', userId: null, name: user } }) {
   const included = items.filter((it) => it.included).sort((a, b) => ORDER.indexOf(a.step) - ORDER.indexOf(b.step) || a.seq - b.seq);
   const results = new Map(); // seq -> { ref, id, ... }
   const written = [];
+  // Salesperson name -> owner, as resolved for this batch (import/owners.js).
+  const ownerFor = ownerLookup(batch.owners);
 
   await transaction(async (client) => {
     // The status was read before this transaction opened, so two commits
@@ -172,7 +209,11 @@ export async function commitBatch(batch, items, { user }) {
                 if (q.quotation_value === null && p.quotation_value !== null && p.quotation_value !== undefined) fill.quotation_value = p.quotation_value;
                 n = await update(client, 'quotations', fill, 'id = $1', [q.id]);
               }
-              results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: q.project_id, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
+              // An unowned original, kept or replaced, takes the sheet's
+              // salesperson as its owner, so the project and PO planned
+              // under it reach that person. An owned one keeps its owner.
+              const owner = await giveOwner(client, 'quotations', q.quotation_no, q.owner_user_id, ownerFor(p.sales_person), actor);
+              results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: q.project_id, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person, owner_user_id: owner });
               const tracked = await applyTracking(client, q.quotation_no, p.tracking);
               written.push({ seq: item.seq, ref: q.quotation_no, action: [replacing ? 'updated' : n ? 'kept, blanks filled' : 'kept', ...tracked].join(', ') });
               break;
@@ -184,7 +225,8 @@ export async function commitBatch(batch, items, { user }) {
             const { tracking, ...record } = p;
             const data = validate('quotations', { ...record, quotation_no: no, project_id: null });
             const q = await insert(client, 'quotations', data);
-            results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
+            const owner = await giveOwner(client, 'quotations', q.quotation_no, null, ownerFor(p.sales_person), actor);
+            results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person, owner_user_id: owner });
             const tracked = await applyTracking(client, q.quotation_no, tracking);
             const how = no === p.quotation_no ? 'created' : item.existing_ref ? `created as ${no} (imported as new, not ${item.existing_ref})` : `created as ${no} (planned number was taken)`;
             written.push({ seq: item.seq, ref: q.quotation_no, action: [how, ...tracked].join(', ') });
@@ -197,6 +239,8 @@ export async function commitBatch(batch, items, { user }) {
               const { rows } = await client.query('SELECT * FROM projects WHERE project_id = $1', [item.existing_ref]);
               if (!rows.length) throw new Error(`existing project ${item.existing_ref} not found`);
               if (replacing) await update(client, 'projects', changes('projects', p, ['primary_service']), 'project_id = $1', [item.existing_ref]);
+              // An unowned project takes its quotation's owner, so its POs reach that salesperson.
+              await giveOwner(client, 'projects', item.existing_ref, rows[0].owner_user_id, parent.owner_user_id, actor);
               if (!parent.project_id) await client.query(`UPDATE quotations SET project_id = $1, po_received = true, status = 'Won - PO Received' WHERE id = $2`, [item.existing_ref, parent.id]);
               results.set(item.seq, { ref: item.existing_ref, project_id: item.existing_ref, quotation_no: parent.ref });
               written.push({ seq: item.seq, ref: item.existing_ref, action: replacing ? 'replaced' : 'kept' });
@@ -209,6 +253,7 @@ export async function commitBatch(batch, items, { user }) {
               sales_person: parent.sales_person || null, remarks: `Won from quotation ${parent.ref}`,
             });
             await insert(client, 'projects', data);
+            await giveOwner(client, 'projects', pid, null, parent.owner_user_id, actor);
             await client.query(`UPDATE quotations SET project_id = $1, po_received = true, status = 'Won - PO Received' WHERE id = $2`, [pid, parent.id]);
             if (p.apply_onboarding_template) {
               for (const [i, [stage, text]] of ONBOARDING_TEMPLATE.entries()) {

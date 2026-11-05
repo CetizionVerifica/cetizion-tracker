@@ -96,7 +96,7 @@ export function buildWhere(def, reqQuery, params, extra = []) {
  */
 export async function listWhere(def, reqQuery, params, scope, alias) {
   const scoped = resourceClause(def, scope, params, { alias });
-  const computed = def.listClauses ? await def.listClauses(reqQuery, { scope, params }) : [];
+  const computed = def.listClauses ? await def.listClauses(reqQuery, { scope, params, alias }) : [];
   return buildWhere(def, reqQuery, params, [...(scoped ? [scoped] : []), ...computed]);
 }
 

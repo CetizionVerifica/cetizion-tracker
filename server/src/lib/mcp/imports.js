@@ -21,6 +21,7 @@ import { query } from '../../db.js';
 import { ApiError } from '../../middleware/error.js';
 import { loadBatch, planBatch, recallFile, rememberFile, fileCache } from '../../import/batches.js';
 import { commitBatch } from '../../import/commit.js';
+import { undecidedMessage, undecidedOwners } from '../../import/owners.js';
 import { DEFAULT_RULES, rulesSchema } from '../../import/rules.js';
 
 /**
@@ -144,6 +145,8 @@ function digest(batch) {
     assumptions: batch.summary?.assumptions ?? 0,
     left_out: batch.summary?.skipped ?? 0,
     left_out_reasons: batch.summary?.skipped_reasons || {},
+    // Who will own each salesperson's deals; an 'undecided' one blocks the commit.
+    owners: (batch.owners || []).map((o) => ({ salesperson: o.name, deals: o.rows, owner: o.owner_name, status: o.status })),
     errors: items.filter((it) => (it.included && it.parent_included) && it.flags.some((f) => f.level === 'error')).length,
     needs_attention: flagged.slice(0, NOTABLE_SHOWN).map(say),
     needs_attention_total: flagged.length,
@@ -291,6 +294,13 @@ export async function commitSheetImport(scope, token, { batch_id: batchId, confi
   const blocking = items.filter((it) => it.included && it.flags.some((f) => f.level === 'error'));
   if (blocking.length) {
     throw new ApiError(422, `${blocking.length} row(s) still have errors, so nothing was written. Fix them or untick them with update_import_plan, then commit again. Rows: ${blocking.slice(0, 10).map((b) => b.seq).join(', ')}${blocking.length > 10 ? '…' : ''}`);
+  }
+  // The same rule as the Import screen: a salesperson who matches no sales
+  // user would leave their deals unowned and off their own lists. Choosing
+  // an owner is a judgement about people, made by an admin on the screen.
+  const undecided = undecidedOwners(batch.owners);
+  if (undecided.length) {
+    throw new ApiError(422, `${undecidedMessage(undecided)} Nothing was written. An admin chooses them on the Import screen (Summary step, Owners); then commit again.`);
   }
   const result = await commitBatch(batch, items, { user: `${token.person || token.name} (via MCP)` });
   fileCache.delete(batchId);

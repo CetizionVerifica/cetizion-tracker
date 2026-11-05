@@ -8,6 +8,7 @@
  *   POST   /api/import/batches/:id/replan    rebuild the plan (after a rule change)
  *   DELETE /api/import/batches/:id           drafts only
  *   PATCH  /api/import/items/:id             edit payload / include / action
+ *   PUT    /api/import/batches/:id/owners    the owner for one salesperson name
  *   POST   /api/import/batches/:id/commit    write everything included
  *
  * Only the admin account may use any of these.
@@ -24,6 +25,8 @@ import { requireAdmin } from '../auth/middleware.js';
 import { reviewFlags, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS, rulesSchema, sanitizeRules, flagRepeatedPoNumbers } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
 import { fileCache, loadBatch, planBatch, recallFile, rememberFile } from '../import/batches.js';
+import { ownerKey, undecidedMessage, undecidedOwners } from '../import/owners.js';
+import { actorFrom } from '../lib/activity.js';
 
 export const importRouter = Router();
 
@@ -232,14 +235,45 @@ importRouter.post('/batches/:id/duplicates', async (req, res) => {
   res.json({ data: await loadBatch(id) });
 });
 
+/**
+ * The owner for one salesperson name on the sheet (import/owners.js).
+ * user_id is an active sales user, or null to leave that name's deals
+ * unassigned on purpose. Every row with that name takes the answer.
+ */
+importRouter.put('/batches/:id/owners', async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows } = await query("SELECT status, owner_map FROM import_batches WHERE id = $1 AND kind = 'sales'", [id]);
+  if (!rows.length) throw new ApiError(404, 'Import batch not found');
+  if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
+  const key = typeof req.body?.key === 'string' ? ownerKey(req.body.key) : null;
+  if (key === null) throw new ApiError(422, 'Name the salesperson (key) to set an owner for', { fields: { key: 'Required' } });
+  const userId = req.body?.user_id ?? null;
+  if (userId !== null) {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new ApiError(422, 'user_id must be a sales user, or null to leave unassigned', { fields: { user_id: 'Invalid' } });
+    const { rowCount } = await query("SELECT 1 FROM users WHERE id = $1 AND active AND role = 'sales'", [userId]);
+    if (!rowCount) throw new ApiError(422, 'An owner must be an active sales user', { fields: { user_id: 'Not an active sales user' } });
+  }
+  // On the sheet at all: one light read of the planned deals' names, rather
+  // than loading and summarising every item of the batch to find out.
+  const { rows: names } = await query(
+    "SELECT DISTINCT payload->>'sales_person' AS name FROM import_items WHERE batch_id = $1 AND step = 'quotation'", [id]);
+  if (!names.some((n) => ownerKey(n.name) === key)) throw new ApiError(422, 'That salesperson is not on this sheet', { fields: { key: 'Not on this sheet' } });
+  await query('UPDATE import_batches SET owner_map = owner_map || jsonb_build_object($2::text, $3::jsonb) WHERE id = $1', [id, key, JSON.stringify(userId)]);
+  res.json({ data: await loadBatch(id) });
+});
+
 importRouter.post('/batches/:id/commit', async (req, res) => {
   const batch = await loadBatch(Number(req.params.id));
   if (batch.status === 'committed') throw new ApiError(409, 'This batch is already committed');
   const items = batch.items.map((it) => ({ ...it, included: it.included && it.parent_included }));
   const blocking = items.filter((it) => it.included && it.flags.some((f) => f.level === 'error'));
   if (blocking.length) throw new ApiError(422, `${blocking.length} included item(s) still have errors. Fix or untick them first.`, { items: blocking.map((b) => b.id) });
+  // An unmatched salesperson would leave their deals unowned, and an unowned
+  // deal is missing from that salesperson's lists. Choose first.
+  const undecided = undecidedOwners(batch.owners);
+  if (undecided.length) throw new ApiError(422, undecidedMessage(undecided), { owners: undecided.map((o) => o.key) });
   try {
-    const result = await commitBatch(batch, items, { user: req.user.username });
+    const result = await commitBatch(batch, items, { user: req.user.username, actor: actorFrom(req.user) });
     // Committed, so the bytes are not wanted again.
     fileCache.delete(batch.id);
     res.json({ data: { ...(await loadBatch(batch.id)), written: result.written } });

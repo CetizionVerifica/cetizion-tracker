@@ -18,6 +18,7 @@ import { buildPlan, extractRow, summarise, IMPORT_AUTHOR, SHEET_FIELDS } from '.
 import { stageKey, needsReading } from './stages.js';
 import { businessToday, businessYear } from '../lib/businessDate.ts';
 import { nextId } from '../lib/sequences.js';
+import { batchOwners } from './owners.js';
 
 
 /** The number off the end of a reference: CTZ/QT/2026/063 -> 63, PRJ-2026-008 -> 8. */
@@ -192,6 +193,8 @@ export async function loadBatch(id) {
     it.source_client = it.payload.client_name || bySeq.get(rootSeq(it, bySeq))?.payload.client_name || null;
   }
   const summary = summarise(items.map((it) => ({ ...it, included: it.included && it.parent_included })), rows[0].summary?.skipped_rows || []);
-  return { ...rows[0], summary: { ...rows[0].summary, ...summary }, items };
+  // Who will own what the commit creates, one entry per salesperson name.
+  const owners = await batchOwners({ query }, { owner_map: rows[0].owner_map, items });
+  return { ...rows[0], summary: { ...rows[0].summary, ...summary }, items, owners };
 }
 export function rootSeq(it, bySeq) { let cur = it; while (cur.parent_seq && bySeq.get(cur.parent_seq)) cur = bySeq.get(cur.parent_seq); return cur.seq; }
