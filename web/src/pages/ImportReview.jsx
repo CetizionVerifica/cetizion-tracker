@@ -5,7 +5,7 @@ import {
   Card, DataTable, Badge, Empty, Alert, ErrorState, Modal, Field, Input, Select, Tabs, Textarea, ConfirmDialog, useToast,
 } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
-import { useFetch } from '../lib/hooks.js';
+import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
 import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox.tsx';
@@ -107,6 +107,8 @@ export default function ImportReview() {
   const [filters, setFilters] = useState({ status: '', flagged: false, action: '' });
 
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/import/batches/${id}`), [id]);
+  // The active sales users an imported salesperson can be matched to.
+  const salesUsers = useLookups().owners;
   const batch = data?.data;
   const items = batch?.items ?? [];
   const bySeq = useMemo(() => new Map(items.map((it) => [it.seq, it])), [items]);
@@ -125,6 +127,16 @@ export default function ImportReview() {
     try {
       await api.action(`/import/batches/${id}/duplicates`, { step: stepKey, action });
       toast(action === 'skip' ? 'Originals kept for every duplicate in this step' : 'Every duplicate in this step will be updated from the sheet', 'success');
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
+  /** The owner for every row with one salesperson name; null leaves them unassigned. */
+  async function setOwner(key, userId) {
+    try {
+      await api.raw(`/import/batches/${id}/owners`, { method: 'PUT', body: { key, user_id: userId } });
       refetch();
     } catch (err) {
       toast(err.message, 'danger');
@@ -231,7 +243,7 @@ export default function ImportReview() {
         />
 
         {current.key === 'summary' ? (
-          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} onShowErrors={showErrors} />
+          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} onShowErrors={showErrors} salesUsers={salesUsers} onSetOwner={setOwner} />
         ) : (
           <>
             <StepTable {...tableProps(current.key)} />
@@ -458,7 +470,62 @@ function Flags({ flags }) {
 
 /* ------------------------------------------------------------ summary */
 
-function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan, onShowErrors }) {
+/**
+ * Who will own each salesperson's deals. A sales user sees a quotation,
+ * project or PO only when they own it, so a name left unmatched would leave
+ * that person's deals off their own lists. Exact matches fill themselves in;
+ * every other name needs a choice before the batch can be committed.
+ */
+function OwnersCard({ owners, salesUsers, committed, onSetOwner }) {
+  const undecided = owners.filter((o) => o.status === 'undecided').length;
+  const NONE = '__none__';
+  return (
+    <Card
+      flush
+      title={`Owners · ${owners.length} salesperson${owners.length === 1 ? '' : 's'} on the sheet`}
+      hint={committed
+        ? 'Who was made the owner of each salesperson\'s deals'
+        : 'Each salesperson\'s deals go to a sales user, so they appear on that person\'s lists. Names that match a user exactly are filled in; choose for the rest. A choice applies to every row with that name.'}
+    >
+      {undecided > 0 && !committed && (
+        <div className="px-4 pt-3"><Alert tone="warning">Choose an owner for {undecided === 1 ? 'the name' : `the ${undecided} names`} marked "Not matched" to commit.</Alert></div>
+      )}
+      <DataTable
+        label="Owners"
+        rows={owners.map((o) => ({ ...o, id: o.key || '(blank)' }))}
+        columns={[
+          { key: 'name', header: 'Salesperson in the sheet', className: 'font-medium', render: (o) => o.name ?? <span className="text-muted-foreground">(no salesperson)</span> },
+          { key: 'rows', header: 'Deals', align: 'right', render: (o) => <span className="num">{o.rows}</span> },
+          {
+            key: 'owner',
+            header: 'Owner in the tracker',
+            render: (o) => committed ? (o.owner_name || <span className="text-muted-foreground">Unassigned</span>) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Select
+                  className="min-w-[220px]"
+                  aria-label={`Owner for ${o.name ?? 'rows with no salesperson'}`}
+                  value={o.status === 'undecided' ? '' : o.status === 'unassigned' ? NONE : String(o.owner_user_id)}
+                  placeholder={o.status === 'undecided' ? 'Choose a user…' : null}
+                  options={[
+                    ...salesUsers.map((u) => ({ value: String(u.id), label: u.name })),
+                    { value: NONE, label: 'Leave unassigned (only admins will see these)' },
+                  ]}
+                  onChange={(e) => e.target.value && onSetOwner(o.key, e.target.value === NONE ? null : Number(e.target.value))}
+                />
+                {o.status === 'matched' && <Badge tone="success">Matched automatically</Badge>}
+                {o.status === 'undecided' && <Badge tone="danger">Not matched</Badge>}
+              </div>
+            ),
+          },
+        ]}
+      />
+    </Card>
+  );
+}
+
+function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan, onShowErrors, salesUsers = [], onSetOwner }) {
+  const owners = batch.owners || [];
+  const ownersUndecided = owners.filter((o) => o.status === 'undecided').length;
   const steps = STEPS.filter((s) => s.key !== 'summary' && s.key !== 'money').map((s) => s.key).concat(['service', 'invoice', 'receipt']);
   const count = (key, pred) => items.filter((it) => it.step === key && pred(it)).length;
   const assumptions = items.filter(effectiveIncluded).flatMap((it) => it.assumptions.map((a) => `S.No ${it.source_row}: ${a}`));
@@ -512,6 +579,8 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
         />
       </Card>
 
+      {owners.length > 0 && <OwnersCard owners={owners} salesUsers={salesUsers} committed={committed} onSetOwner={onSetOwner} />}
+
       {replacing.length > 0 && !committed && (
         <Card title={`Existing records updated from the sheet · ${replacing.length}`} hint="The sheet's values replace the tracker's; fields the sheet leaves blank are not touched. Remarks written in the tracker itself are kept on the deal's timeline.">
           <ul className={list}>
@@ -562,8 +631,9 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
       {!committed && (
         <div className="flex flex-wrap items-center justify-end gap-3">
           {hasErrors && <span className="text-[13px] text-late">Fix or untick the {errors.length === 1 ? 'row' : `${errors.length} rows`} with an error to commit</span>}
+          {!hasErrors && ownersUndecided > 0 && <span className="text-[13px] text-late">Choose an owner for {ownersUndecided === 1 ? 'one salesperson' : `${ownersUndecided} salespeople`} above to commit</span>}
           <Button variant="secondary" onClick={onBack}>Back to review</Button>
-          <Button disabled={hasErrors} onClick={onCommit}>Complete and commit</Button>
+          <Button disabled={hasErrors || ownersUndecided > 0} onClick={onCommit}>Complete and commit</Button>
         </div>
       )}
     </div>

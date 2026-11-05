@@ -4,6 +4,7 @@ import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert, DocumentLink, Tabs } from '../components/ui.jsx';
 import { PoReviewList, useReviewCount } from '../components/EmailReview.jsx';
 import { useLookups } from '../lib/hooks.js';
+import { useAuth } from '../lib/auth.jsx';
 import { money, date, number, percent } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
 import { poRevisionFields } from '../lib/poRevision.js';
@@ -11,6 +12,7 @@ import { poRevisionFields } from '../lib/poRevision.js';
 export default function PurchaseOrders() {
   const navigate = useNavigate();
   const lookups = useLookups();
+  const { isAdmin } = useAuth() ?? {};
   const [params, setParams] = useSearchParams();
   // POs read from client email that need a person (docs/email-po-plan.md §3.7).
   const tab = params.get('tab') === 'review' ? 'review' : 'all';
@@ -128,6 +130,10 @@ export default function PurchaseOrders() {
         // Insights links its PO bars with ?live=1: cancelled and revised POs left out.
         { name: 'live', label: 'Cancelled, revised', options: [{ value: '1', label: 'Left out' }] },
         { name: 'from_email', label: 'Source', options: [{ value: '1', label: 'Registered from email' }] },
+        // A PO whose quotation and project have no owner is on no salesperson's
+        // list. Only an admin can see those, so only an admin is offered the
+        // filter that finds them to assign.
+        ...(isAdmin ? [{ name: 'unowned', label: 'Owner', options: [{ value: '1', label: 'No owner (hidden from sales)' }] }] : []),
       ]}
       banner={
         <>

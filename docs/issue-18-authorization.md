@@ -242,6 +242,7 @@ session is **401**, before any of these is considered.
 | `GET /api/import/batches/:id` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
 | `POST /api/import/batches/:id/commit` | **admin** | A commit writes every row of the batch into the live tables. |
 | `POST /api/import/batches/:id/duplicates` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
+| `PUT /api/import/batches/:id/owners` | **admin** | Choosing who owns an imported salesperson's deals decides which sales users can see them. |
 | `POST /api/import/batches/:id/replan` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
 | `PATCH /api/import/items/:id` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
 | `GET /api/import/template.csv` | **admin** | The whole import router is admin-only: a commit writes records in bulk under somebody else's name. |

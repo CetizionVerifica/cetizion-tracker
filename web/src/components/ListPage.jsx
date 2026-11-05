@@ -115,7 +115,42 @@ export function ListPage({
   const params = { q: debouncedSearch, ...filterValues, ...(sort ? { sort } : {}) };
   // refreshToken lets a parent pull fresh rows after an action without
   // remounting, so the user's search and filters survive.
-  const { rows, total, loading, error, refetch } = useList(resource, params, [refreshToken]);
+  const { rows: firstPage, total, loading, error, refetch: refetchFirstPage } = useList(resource, params, [refreshToken]);
+
+  /**
+   * The server sends a page of 500 rows. The count already said "500 of
+   * 640", but nothing on the page fetched the other 140, so a long list
+   * (Orders, after a few sheet imports) simply ended. "Show more" fetches
+   * the next page with the same filters and adds it on.
+   *
+   * Every way the first page is read again starts the list over: a change
+   * of filters, sort or refresh token, and a reload after a save or a
+   * delete (`refetch` below), which would otherwise leave the later pages
+   * stale and the next offset one row out. A page that arrives after the
+   * list has started over is dropped, so a slow "Show more" cannot add
+   * rows for filters that are no longer set.
+   */
+  const PAGE = 500;
+  const [more, setMore] = useState([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const generation = useRef(0);
+  const startOver = () => { generation.current += 1; setMore([]); setLoadingMore(false); };
+  const pageKey = JSON.stringify([resource, params, refreshToken]);
+  useEffect(startOver, [pageKey]);
+  const refetch = () => { startOver(); refetchFirstPage(); };
+  const rows = more.length ? [...firstPage, ...more] : firstPage;
+  async function loadNextPage() {
+    const asked = generation.current;
+    setLoadingMore(true);
+    try {
+      const next = await api.list(resource, { ...params, offset: rows.length, limit: PAGE });
+      if (asked === generation.current) setMore((m) => [...m, ...(next.data || [])]);
+    } catch (err) {
+      if (asked === generation.current) toast(err.message, 'danger');
+    } finally {
+      if (asked === generation.current) setLoadingMore(false);
+    }
+  }
 
   /**
    * Filters live in the URL (web/CLAUDE.md §2), so a link or a refresh
@@ -363,6 +398,14 @@ export function ListPage({
                 )
               }
             />
+          )}
+          {!error && !loading && rows.length < total && (
+            <div className="flex items-center justify-center gap-3 border-t border-border px-4 py-3">
+              <span className="small muted num">Showing {rows.length} of {total}</span>
+              <button type="button" className="btn btn--sm" disabled={loadingMore} onClick={loadNextPage}>
+                {loadingMore ? 'Loading…' : `Show the next ${Math.min(PAGE, total - rows.length)}`}
+              </button>
+            </div>
           )}
         </Card>
       </div>

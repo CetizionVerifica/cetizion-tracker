@@ -419,12 +419,18 @@ export const resources = {
     // And the records behind a Reports chart (?report_from=&report_sector=…),
     // picked by the report's own rules, so the list holds what the bar counted.
     // ?from_email=1: POs registered automatically from a client's email.
+    // ?unowned=1: POs no sales user can see, because neither the quotation
+    // nor the project above them is owned by an active user
+    // (auth/ownership.js): never assigned, or owned by somebody who has
+    // since left. Only an admin sees these, so this is the list an admin
+    // works through to assign them.
     listClauses: async (q, ctx) => [
       ...(String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+      ...(String(q.unowned ?? '') === '1' ? [unownedPoClause(ctx.alias || 'v_purchase_orders')] : []),
       ...fromEmailClause('purchase-orders', q),
       ...await reportListClauses('pos', q, ctx),
     ],
-    computedFilters: ['live', 'from_email', ...REPORT_LIST_KEYS],
+    computedFilters: ['live', 'unowned', 'from_email', ...REPORT_LIST_KEYS],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
@@ -1392,6 +1398,18 @@ async function quotationListClauses(q, { scope, params }) {
     }));
   }
   return out;
+}
+
+/**
+ * ?unowned=1 on purchase orders: neither the PO's quotation nor its project
+ * is owned by an active user, so no salesperson's list holds it. `relation`
+ * is the list's own relation name (crud.js passes it), never request input.
+ */
+function unownedPoClause(relation) {
+  const r = `"${String(relation).replace(/"/g, '')}"`;
+  const ownedBy = (alias) => `${alias}.owner_user_id IN (SELECT id FROM users WHERE active)`;
+  return `NOT EXISTS (SELECT 1 FROM quotations uq WHERE uq.quotation_no = ${r}.quotation_no AND ${ownedBy('uq')})
+    AND NOT EXISTS (SELECT 1 FROM projects up WHERE up.project_id = ${r}.project_id AND ${ownedBy('up')})`;
 }
 
 /**
